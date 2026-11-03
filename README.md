@@ -1,4 +1,4 @@
-# BoxTurtles 🐢
+# BoxTurtles
 
 ## AI-Powered Eastern Box Turtle Detection
 
