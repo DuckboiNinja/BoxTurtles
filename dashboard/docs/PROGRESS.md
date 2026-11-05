@@ -3,7 +3,7 @@
 ## Completed
 
 - Redesigned the website with Spotify-inspired charcoal surfaces, a compact rounded sidebar, bold headings, pill-shaped buttons and a brighter green accent. Light mode uses neutral white surfaces. The shorter dashboard introduction provides direct upload/review actions; featured confirm/reject controls remain visible on mobile.
-- Prepared the project for the existing `DuckboiNinja/BoxTurtles` repository under `dashboard/`, preserving its root research README and `challenge-x.ipynb`. Runtime data, local configuration, model weights, build output and development tools are excluded. GitHub publication requires an authenticated connection; see the latest handoff for upload status.
+- Published the project to [DuckboiNinja/BoxTurtles](https://github.com/DuckboiNinja/BoxTurtles/tree/main/dashboard) under `dashboard/` on November 5, 2026, preserving its root research README and `challenge-x.ipynb`. Runtime data, local configuration, model weights, build output and development tools are excluded. GitHub confirmed the prepared dashboard commit `9588bfd7a367e6eb3934549ff5984937db9ddd22` on `main` after an authenticated fast-forward push. The original local project, environment and data remain in BoxTurtleProject.
 - Renamed the website, browser title, API title, CSV filename, launcher message and setup guides to Asian Baddies. Adjusted the sidebar wordmark to fit the longer name at all text sizes.
 
 - Local FastAPI backend, SQLAlchemy/SQLite persistence, local images and video storage.
