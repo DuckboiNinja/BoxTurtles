@@ -1,0 +1,14 @@
+{
+  "source": "companion-computer",
+  "metadata": {
+    "latitude": 35.9192,
+    "longitude": -78.9628,
+    "captured_at": "2026-10-18T10:32:00-04:00"
+  },
+  "model_id": "external-turtle-v2",
+  "model_name": "External turtle detector v2",
+  "is_mock": true,
+  "detections": [
+    {"class_name": "turtle", "confidence": 0.93, "bounding_box": [300, 180, 650, 480]}
+  ]
+}

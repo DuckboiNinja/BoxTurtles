@@ -65,3 +65,11 @@ The annotated dataset is privately hosted on Kaggle and is not included in this 
 ## Project Status
 
 <em>Active development – currently transitioning from ground-level detection to aerial detection.</em>
+
+## Turtle Survey Dashboard
+
+The [dashboard](dashboard/README.md) adds a local website for reviewing turtle detections from uploaded photographs and recorded DJI Avata 2 footage. Its **Asian Baddies** interface includes light/dark themes, a review queue, verified sightings, maps, video frame sampling, replaceable YOLO adapters and a MediaMTX preview setup page.
+
+Demo mode works without a model file, drone or paid API. The live page is a browser preview; the Goggles N3/Android bridge and live inference still need hardware integration. The model's aerial accuracy remains unverified.
+
+After cloning this repository, open `dashboard/` and follow its [Windows/Linux installation instructions](dashboard/README.md#fresh-installation-windows). Use Python 3.11/3.12 and Node.js 22.12 or newer; dependencies and runtime data are not committed. The original training notebook remains at the repository root.

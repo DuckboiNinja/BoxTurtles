@@ -1,0 +1,3 @@
+-r requirements.txt
+# Optional. Demo mode does not import or install PyTorch/Ultralytics.
+ultralytics>=8.3,<9
