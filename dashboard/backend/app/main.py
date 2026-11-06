@@ -3,6 +3,7 @@ import logging
 import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
+from time import perf_counter
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
@@ -20,7 +21,7 @@ from .db import CapturedImage, Detection, DetectionModel, ProcessingJob, Runtime
 from .demo import seed_demo
 from .deletion import delete_rejected_photos
 from .engine import EngineRegistry
-from .ingestion import decode_image, process_video, save_frame
+from .ingestion import decode_image, predict_frame, process_video, save_frame
 from .metadata import live_frame_timestamp, read_telemetry, supplied
 from .schemas import IngestEnvelope, Metadata, ModelRegistration, RejectedPhotoDeletion, SettingsUpdate
 from .streams import router as streams_router
@@ -34,6 +35,7 @@ def detection_data(record):
         "id": record.id, "sighting_id": f"S-{record.id[:8].upper()}", "image_id": record.image_id,
         "class_name": record.class_name, "confidence": record.confidence, "bounding_box": record.bounding_box,
         "status": record.status, "reviewed_at": record.reviewed_at, "created_at": record.created_at,
+        "review_method": record.review_method, "auto_accept_threshold": record.auto_accept_threshold,
         "model_id": record.model_id, "model_name": record.model_name, "is_mock": record.is_mock,
         "original_url": f"/media/{image.original_image_path}", "cropped_url": f"/media/{record.cropped_image_path}",
         "annotated_url": f"/media/{record.annotated_image_path}", "filename": image.filename,
@@ -49,7 +51,8 @@ def job_data(job):
 
 def settings_data(settings):
     return {"active_model_id": settings.active_model_id, "confidence_threshold": settings.confidence_threshold,
-            "frame_interval_seconds": settings.frame_interval_seconds, "max_frames": settings.max_frames}
+            "frame_interval_seconds": settings.frame_interval_seconds, "max_frames": settings.max_frames,
+            "auto_accept_enabled": settings.auto_accept_enabled, "auto_accept_threshold": settings.auto_accept_threshold}
 
 
 def create_app(config: Config | None = None):
@@ -146,7 +149,8 @@ def create_app(config: Config | None = None):
     def review(detection_id, target, session):
         expected = ["verified", "rejected"] if target == "pending" else ["pending"]
         result = session.execute(update(Detection).where(Detection.id == detection_id, Detection.status.in_(expected)).values(
-            status=target, reviewed_at=None if target == "pending" else now()))
+            status=target, reviewed_at=None if target == "pending" else now(),
+            review_method=None if target == "pending" else "human", auto_accept_threshold=None))
         if result.rowcount == 0:
             session.rollback()
             if not session.get(Detection, detection_id):
@@ -193,13 +197,18 @@ def create_app(config: Config | None = None):
 
     @app.put("/api/settings")
     def put_settings(payload: SettingsUpdate, session=Depends(db)):
+        current = session.get(RuntimeSettings, 1)
+        # Old clients may omit the added fields. Preserve stored values rather
+        # than silently resetting an opt-in policy while saving another setting.
+        values = settings_data(current) | payload.model_dump(exclude_unset=True)
+        if values["auto_accept_enabled"] and values["auto_accept_threshold"] < values["confidence_threshold"]:
+            raise HTTPException(422, "Automatic acceptance confidence must be at least the detection confidence threshold.")
         if payload.active_model_id != "demo":
             try:
                 app.state.registry.select(session, payload)
             except Exception as exc:
                 raise HTTPException(422, f"Cannot activate this model: {exc}") from exc
-        current = session.get(RuntimeSettings, 1)
-        for key, value in payload.model_dump().items():
+        for key, value in values.items():
             setattr(current, key, value)
         session.commit()
         return {"data": settings_data(current)}
@@ -257,6 +266,41 @@ def create_app(config: Config | None = None):
             raise HTTPException(422, str(exc)) from exc
         return {"data": {"image_id": record.id, "detections": [detection_data(x) for x in created], "metadata": record.metadata_info}}
 
+    @app.post("/api/inference/frame")
+    async def inference_frame(file: UploadFile = File(...), envelope: str = Form("{}"), persist_candidates: bool = Form(False),
+                              x_ingest_token: str | None = Header(None), session=Depends(db)):
+        """Infer transient viewer frames, saving candidate frames only on opt-in."""
+        if config.ingest_token and not secrets.compare_digest(x_ingest_token or "", config.ingest_token):
+            raise HTTPException(401, "A valid X-Ingest-Token is required.")
+        try:
+            payload = IngestEnvelope.model_validate_json(envelope)
+        except ValidationError as exc:
+            raise HTTPException(422, f"Invalid ingestion envelope: {exc}") from exc
+        if payload.detections is not None:
+            raise HTTPException(422, "Live inference runs the active local model; omit upstream detections.")
+        active = await run_in_threadpool(selection, session)
+        content = await read_limited(file, min(config.max_upload_mb, 50) * 1024 * 1024)
+        try:
+            image, embedded = await run_in_threadpool(decode_image, content)
+            started = perf_counter()
+            candidates = await run_in_threadpool(predict_frame, image, active)
+            inference_ms = (perf_counter() - started) * 1000
+            capture = live_frame_timestamp(embedded.apply(supplied(payload.metadata, "upstream source")), payload.frame_captured_at)
+            record = None
+            if persist_candidates and candidates:
+                record, created = await run_in_threadpool(save_frame, session, storage, image, Path(file.filename or "frame.jpg").name,
+                                                          payload.source, capture, selection=active, predicted=candidates, original_bytes=content)
+                result = [detection_data(item) for item in created]
+            else:
+                result = [candidate.model_dump() | {"id": None, "status": None, "review_method": None,
+                                                    "auto_accept_threshold": None, "is_mock": active.is_mock} for candidate in candidates]
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        return {"data": {"width": image.width, "height": image.height, "detections": result,
+                         "model_id": active.model_id, "model_name": active.model_name, "is_mock": active.is_mock,
+                         "inference_ms": round(inference_ms, 2), "image_id": record.id if record else None,
+                         "metadata": record.metadata_info if record else capture.info()}}
+
     @app.post("/api/upload/video", status_code=202)
     async def upload_video(background_tasks: BackgroundTasks, file: UploadFile = File(...), metadata: str = Form("{}"),
                            telemetry: UploadFile | None = File(None), frame_interval_seconds: float | None = Form(None),
@@ -290,6 +334,7 @@ def create_app(config: Config | None = None):
                 raise HTTPException(422, "The video file is empty.")
             job = ProcessingJob(id=job_id, filename=Path(file.filename).name, settings_snapshot={"model_id": active.model_id,
                                 "model_name": active.model_name, "confidence_threshold": active.threshold, "is_mock": active.is_mock,
+                                "auto_accept_enabled": active.auto_accept_enabled, "auto_accept_threshold": active.auto_accept_threshold,
                                 "frame_interval_seconds": interval, "max_frames": limit, "telemetry_records": len(points)})
             session.add(job)
             session.commit()

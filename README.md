@@ -70,7 +70,9 @@ The annotated dataset is privately hosted on Kaggle and is not included in this 
 
 The [dashboard](dashboard/README.md) adds a local website for reviewing turtle detections from uploaded photographs, recorded DJI Avata 2 footage, and sampled frames from a browser-shared scrcpy window. Its **Asian Baddies** interface includes light/dark themes, adjustable thumbnails and list view, previous/next image inspection, bulk review, confirmed deletion of rejected photos, verified sightings, maps, and replaceable local YOLO adapters.
 
-Demo mode works without a model file, drone or paid API. The live page previews your shared scrcpy window and can run the selected model on sampled frames, with sampling help and session limits. Live snapshots retain their measured browser capture time and its provenance; missing GPS stays unknown. Actual DJI capture quality and the model's aerial accuracy still require field verification.
+Demo mode works without a model file, drone or paid API. The live workspace previews your shared scrcpy window and can run the selected model on sampled frames. Its **Live YOLO** page continuously annotates analyzed frames with boxes and confidence scores, with actual throughput/latency readings and optional candidate-frame saving. Both live pages retain the same window share and in-memory ingestion token.
+
+Optional automatic acceptance sends new genuine local YOLO turtle predictions at or above a configured confidence threshold to Verified sightings, with the method and threshold recorded; it starts off, excludes demo/upstream results, and leaves existing reviews unchanged. Live snapshots retain their measured browser capture time and its provenance; missing GPS stays unknown. Actual DJI capture quality and the model's aerial accuracy still require field verification.
 
 The launcher recognizes an already-running dashboard instead of starting another server on port 8000. See the [dashboard guide](dashboard/README.md) for photo management, live-feed setup, and backend restart instructions.
 

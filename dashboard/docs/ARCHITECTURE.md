@@ -7,6 +7,9 @@ flowchart LR
   Frames --> Normalize
   Scrcpy[scrcpy window shared by browser] --> Sampler[Browser JPEG sampler]
   Sampler --> Ingest
+  Scrcpy --> LiveInference[Temporary frame inference]
+  LiveInference --> Engine
+  LiveInference --> Annotated[Exact-frame browser annotations]
   Future[Future network / ROS 2 bridge] --> Ingest[Frame ingestion API]
   Ingest --> Normalize
   Normalize --> Engine[Detector protocol]
@@ -15,7 +18,9 @@ flowchart LR
   Engine --> Candidates[Standard candidates]
   Ingest -->|Upstream detections supplied| Candidates
   Candidates --> Storage[SQLite + local media]
-  Storage --> Review[Human review]
+  Storage --> Review[Review]
+  Storage --> AutoAccept[Optional local YOLO confidence policy]
+  AutoAccept --> Verified
   Review --> Verified[Verified record + GPS map]
   Review --> Archive[Rejected archive]
 ```
@@ -55,6 +60,8 @@ Omit `detections` or use `null` to run the active local engine. Supply `[]` to r
 
 An independent source adapter can repeatedly POST frames to this endpoint, with synchronized metadata when available. The Live feed page is one such adapter: it samples browser-shared scrcpy video and submits `{"source":"scrcpy-window","metadata":{},"frame_captured_at":"2026-11-06T12:34:56.789Z"}`, leaving absent GPS null and allowing the active local engine to run. The optional top-level `frame_captured_at` requires a timezone and is accepted only for `scrcpy-window`; other sources use original capture metadata as before. This contract does not open a camera, negotiate a video stream, use a DJI SDK, or provide backpressure. The browser sampler, future ROS 2 bridge, or other stream decoder owns transport, frame-rate control, reconnect behavior, and clock synchronization; each submits the same frame envelope.
 
+`POST /api/inference/frame` accepts the same multipart `file`, JSON `envelope`, and optional `X-Ingest-Token`, plus `persist_candidates` (false by default). It runs the active local detector once and returns the oriented width/height, candidate boxes/scores, model ID/name, mock flag, and inference duration. Temporary prediction creates no image/detection rows or media files. When persistence is explicitly enabled and candidates exist, the same prediction output is saved through the existing retention/provenance workflow and the saved detection records are returned; no-candidate frames remain temporary. Browser-side coordinates refer to the exact submitted frame, rather than the newer live video currently arriving from scrcpy.
+
 Example with curl on Linux (use `curl.exe` and adapted paths on Windows):
 
 ```bash
@@ -73,7 +80,11 @@ Manual video GPS represents a constant provided location. Supply a trajectory CS
 
 ## Storage and review
 
-`CapturedImage` has many `Detection` records. Each candidate gets an independent crop/annotation and review status. The normalized full frame is stored once; uploaded original bytes are also retained as `source.bin` alongside it. Verification only updates the candidate status and review timestamp. Rejections retain all media for later analysis. `verified` records are sightings; they are not copied into another table.
+`CapturedImage` has many `Detection` records. Each candidate gets an independent crop/annotation and review status. The normalized full frame is stored once; uploaded original bytes are also retained as `source.bin` alongside it. Verification updates the candidate status, review timestamp, and review provenance. Rejections retain all media for later analysis. `verified` records are sightings; they are not copied into another table.
+
+`RuntimeSettings` stores `auto_accept_enabled` (false initially) and `auto_accept_threshold` (0.95 initially), independently of the detector's candidate threshold. Enabled acceptance must have a threshold at least as high as the candidate threshold. New genuine local YOLO turtle/box-turtle candidates at or above the acceptance threshold may transition from pending to verified through a conditional database update. Demo/mock outputs and supplied upstream candidates are excluded; enabling the policy never scans or rewrites earlier pending records. Recorded-video jobs retain their policy snapshot together with the model and candidate threshold.
+
+Automatic acceptance records `review_method="auto-confidence"`, the policy threshold, and review time. Human actions record their own method; resetting a reviewed record clears its review provenance. Legacy records with unknown methods remain unknown. Additive SQLite migrations supply disabled/default acceptance settings and nullable audit columns without changing existing statuses, files, or capture metadata. The UI and CSV distinguish automatic acceptance from human confirmation. The score remains a model score rather than proof of an observation.
 
 Explicit rejected-photo deletion is the exception to default retention. `POST /api/images/delete-rejected` accepts a bounded list of image UUIDs after the UI lists the photos and asks for permanent-deletion confirmation. A SQLite writer lock precedes validation; every associated detection must still be rejected. Missing photos, active siblings, unsafe paths, or failed media staging abort the entire batch. Individual bulk reviews continue to use the existing conditional review endpoints; partial failures stay selected for retry.
 
@@ -95,6 +106,8 @@ Every other transition returns HTTP 409. SQLite uses foreign keys, WAL, and a bu
 
 `frontend/src/LiveFeed.jsx` requests a browser `getDisplayMedia` video stream only after the user selects **Share scrcpy window**. The desktop/browser picker chooses the scrcpy window; the website cannot select it silently or persist screen-sharing permission. The browser runs on the Ubuntu desktop that displays scrcpy and needs localhost, loopback, or HTTPS. No audio, relay server, DJI SDK, or network-video interface is assumed.
 
+The component stays mounted across **Live feed** and **Live YOLO**, retaining the browser-owned capture stream between modes. Mode changes stop processing and require an explicit start for the new mode. Leaving both pages releases capture tracks and stops their loops.
+
 The returned stream is attached to a local video preview. Preview alone does not submit frames. **Start detection** enables a bounded sampler: capture one JPEG from the decoded video, POST it to `/api/ingest/frame`, then wait the remaining portion of the chosen start-to-start interval. Only one request is in flight; inference taking longer than the interval slows sampling without queuing stale frames. The default interval is five seconds and the default session limit is 60 frames. The optional **Ingest token** is under **Advanced connection settings**, held in page memory, and sent as `X-Ingest-Token`.
 
 Frame encoding preserves the entire shared image and its aspect ratio. A scale of `min(1, 1920 / max(videoWidth, videoHeight))` caps the longest edge at 1920 pixels without enlarging smaller sources. The canvas encodes JPEG at quality 0.92; no automatic cropping removes phone controls, overlays, or borders.
@@ -102,6 +115,10 @@ Frame encoding preserves the entire shared image and its aspect ratio. A scale o
 Each envelope identifies `scrcpy-window` and supplies empty original-camera metadata plus the measured frame snapshot time. `new Date().toISOString()` is captured immediately before drawing the shared video frame onto the snapshot canvas, so encoding, HTTP delays, and model processing do not shift it. If original capture metadata is absent, the backend stores this value in `captured_at` with provenance `browser frame capture` and a clock/mirroring-delay warning. The inspector labels it **Live frame captured**, and CSV includes `capture_time_source`; it is not presented as original camera exposure time. Explicit upstream or EXIF original capture metadata wins. Missing/legacy frame timestamps remain null, and there is no backfill. GPS remains unknown unless actually supplied. The active detector chooses real or simulated inference, retains model/mock provenance, and preserves the sampled JPEG bytes as before.
 
 Sampling stops on an error, frame limit, manual stop, track ending or muting, document visibility becoming hidden, or page teardown. Unmuting or returning to the visible tab does not restart detection automatically. Page teardown also releases capture tracks. A submitted frame may still finish on the server after a stop. A captured window is not proof of a current drone feed; the user checks the actual mirrored content. Phone controls and overlays remain in the captured image. See [the scrcpy guide](LIVE_FEED.md) for the workflow and Ubuntu capture limitations.
+
+In **Live YOLO**, an independent bounded loop targets 1–10 predictions per second (default 5) for up to 1–10,000 frames per session (default 300). Each iteration measures the browser snapshot time, preserves the full shared aspect ratio with a maximum 1280-pixel edge (no upscaling), encodes JPEG at quality 0.9, awaits `/api/inference/frame`, and then draws the retained snapshot plus its returned candidate boxes on the annotation canvas. The canvas advances only with completed predictions; a delayed response never draws its boxes onto a newer raw-video frame. Only one request is active, and the loop waits any remaining target interval before sampling again. Actual rate and inference latency are reported separately. Stops and mode changes invalidate late responses for display; an already submitted persistence request may still commit on the backend.
+
+The annotation loop defaults to temporary prediction. **Save candidate frames** explicitly sends `persist_candidates=true`, preserving only candidate-bearing frames; the backend applies its current saved automatic-acceptance policy to eligible genuine predictions. The viewer makes no claim of frame-to-frame identity tracking or duplicate-sighting suppression. Demo annotation remains available without optional YOLO packages and is visibly marked as simulated.
 
 The previous `backend/app/streams.py`, `live_sources` table, and `GET/PUT /api/live-source` routes remain as legacy configuration compatibility. The current frontend neither reads them nor uses their saved player addresses. Their static connection/inference flags describe only that legacy configuration, not the browser's active capture session.
 

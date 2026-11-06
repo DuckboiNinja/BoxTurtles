@@ -1,8 +1,10 @@
 from datetime import datetime, timedelta
 from io import BytesIO
 from pathlib import Path
+import re
 
 from PIL import Image, ImageDraw, ImageOps, UnidentifiedImageError
+from sqlalchemy import update
 
 from .db import CapturedImage, Detection, ProcessingJob, now, uid
 from .metadata import CaptureMetadata, exif_metadata, match_telemetry, supplied, video_metadata
@@ -22,13 +24,23 @@ def decode_image(content: bytes):
         raise ValueError("The uploaded file is not a supported, decodable image.") from exc
 
 
+def predict_frame(image: Image.Image, selection):
+    """Run one model pass and validate the displayed pixel coordinate contract."""
+    candidates = selection.detector.predict(image, selection.threshold)
+    for candidate in candidates:
+        if candidate.bounding_box[2] > image.width or candidate.bounding_box[3] > image.height:
+            raise ValueError("Bounding box is outside the EXIF-oriented image dimensions.")
+    return candidates
+
+
 def save_frame(session, storage: Path, image: Image.Image, filename: str, source: str, metadata: CaptureMetadata,
                selection=None, candidates: list[Candidate] | None = None, model_id="external", model_name="External detector", is_mock=False,
-               is_demo=False, original_bytes: bytes | None = None):
+               is_demo=False, original_bytes: bytes | None = None, predicted: list[Candidate] | None = None):
+    local_inference = candidates is None
     if candidates is None:
         if selection is None:
             raise ValueError("A detection engine is required.")
-        candidates = selection.detector.predict(image, selection.threshold)
+        candidates = predicted if predicted is not None else predict_frame(image, selection)
         model_id, model_name, is_mock = selection.model_id, selection.model_name, selection.is_mock
     # Reject upstream invalid boxes instead of silently misaligning crops or annotations.
     for candidate in candidates:
@@ -52,6 +64,7 @@ def save_frame(session, storage: Path, image: Image.Image, filename: str, source
         session.add(record)
         session.flush()
         created = []
+        auto_accept_ids = []
         for candidate in candidates:
             detection_id = uid()
             x1, y1, x2, y2 = candidate.bounding_box
@@ -73,6 +86,22 @@ def save_frame(session, storage: Path, image: Image.Image, filename: str, source
                                   annotated_image_path=f"{image_id}/{annotation_path.name}", model_id=model_id, model_name=model_name, is_mock=is_mock)
             session.add(detection)
             created.append(detection)
+            label = re.sub(r"[\s_-]+", " ", candidate.class_name.casefold()).strip()
+            if (local_inference and selection.model_kind == "yolo" and selection.auto_accept_enabled
+                    and not is_mock and not is_demo and candidate.confidence >= selection.auto_accept_threshold
+                    and label in {"turtle", "box turtle"}):
+                auto_accept_ids.append(detection_id)
+        if auto_accept_ids:
+            session.flush()
+            # Only candidates from this newly created frame are eligible. An
+            # explicit pending condition retains the same review transition rule.
+            session.execute(update(Detection).where(Detection.id.in_(auto_accept_ids), Detection.status == "pending", Detection.is_mock.is_(False)).values(
+                status="verified", reviewed_at=now(), review_method="auto-confidence", auto_accept_threshold=selection.auto_accept_threshold))
+            # UPDATE synchronization can leave newly inserted nullable audit
+            # attributes stale. Reload those values when the caller reads them.
+            for detection in created:
+                if detection.id in auto_accept_ids:
+                    session.expire(detection, ["status", "reviewed_at", "review_method", "auto_accept_threshold"])
         session.commit()
         return record, created
     except Exception:

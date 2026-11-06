@@ -1,6 +1,6 @@
 # Asian Baddies · Turtle survey workspace
 
-A local, responsive turtle detection dashboard for **recorded DJI Avata 2 footage, uploaded photographs, and sampled video from a shared scrcpy window**. Demo mode is the default and works without a drone, model file, PyTorch, or paid API.
+A local, responsive turtle detection dashboard for **recorded DJI Avata 2 footage, uploaded photographs, and live model annotations from a shared scrcpy window**. Demo mode is the default and works without a drone, model file, PyTorch, or paid API.
 
 ## Start on this computer
 
@@ -62,8 +62,11 @@ FFmpeg/`ffprobe` is optional for embedded video capture tags. Without it, video 
 - **Verified sightings:** search by ID, filename, or coordinates; filter by capture date, confidence, and GPS availability; sort; export CSV; or return a mistaken verification to pending.
 - **Turtle map:** OpenStreetMap/Leaflet markers for verified records with GPS. Marker popups open the sighting. Fit all markers with the expand button. Missing locations never become map markers.
 - **Upload media:** multiple photographs or one video at a time, optional GPS/capture time, configurable frame sampling, external CSV/SRT telemetry, and processing progress.
-- **Settings:** select the demo engine or a registered .pt model, change confidence and video defaults, and register more models by their backend-local paths.
+- **Settings:** select the demo engine or a registered .pt model, change detection confidence and video defaults, optionally enable a separate automatic-acceptance threshold, and register more models by their backend-local paths.
 - **Live feed:** share your existing scrcpy window through the desktop browser, preview it, then optionally start sampled local detection using the active model. Set a frame interval and session limit; stop sharing or leave the page to disconnect. Open the dashboard on the Ubuntu computer displaying scrcpy through localhost, loopback, or HTTPS. No OBS or MediaMTX is needed. See [Live feed setup](docs/LIVE_FEED.md).
+- **Live YOLO:** watch continuously updated model boxes and confidence scores on the exact frames sent for inference. Target up to 10 frames/second, with one request at a time; actual speed depends on local inference. Preview does not save records by default. Enable **Save candidate frames** to retain frames containing candidates and apply the saved review policy. The existing window share is retained when switching between Live feed and Live YOLO.
+
+Automatic acceptance is **off by default**. In Settings, enable **Automatically accept high-confidence turtles** and choose **Automatic acceptance threshold (%)** (95% by default). This threshold is separate from the lower detection threshold and must be at least as high. New genuine local YOLO turtle detections meeting it enter Verified sightings with an **Automatically accepted** label and the policy threshold recorded; other candidates remain pending. Demo/mock results and externally supplied detections are never automatically accepted. Existing pending records are not changed. Model confidence is a score, not a guarantee that a turtle is present; automatically accepted records remain available for inspection and correction.
 
 The **Text size** menu in the top bar offers Standard, Large (default), and Extra large. The selection is saved in this browser. The interface uses larger labels, higher-contrast secondary text, larger controls, and responsive layouts on wide and small screens.
 
@@ -173,8 +176,9 @@ Successful responses use `{ "data": ... }`. Lists include pagination metadata wh
 | `POST /api/upload` | Multipart image file + JSON `metadata` |
 | `POST /api/upload/video` | Multipart video + optional metadata, telemetry, interval, frame limit |
 | `POST /api/ingest/frame` | Multipart image + standardized JSON `envelope` |
+| `POST /api/inference/frame` | Active-model prediction for one frame; multipart `file`, JSON `envelope`, optional `persist_candidates` (false by default); only frames with candidates are saved when enabled |
 | `GET /api/jobs`, `GET /api/jobs/{id}` | Video job progress/errors |
-| `GET /api/settings`, `PUT /api/settings` | Detection/video settings |
+| `GET /api/settings`, `PUT /api/settings` | Detection/video settings and optional automatic-acceptance policy |
 | `GET /api/models`, `POST /api/models` | Register/selectable local models |
 | `GET /api/live-source`, `PUT /api/live-source` | Legacy saved player configuration; unused by the current scrcpy capture page |
 
@@ -213,7 +217,7 @@ BoxTurtleProject/
   requirements*.txt, .env.example
 ```
 
-This is a single-user local application bound to loopback, with no general account/login layer. `TURTLE_INGEST_TOKEN` can protect the frame-ingestion endpoint; if configured, enter it in the Live feed page's optional token field. It is held only in page memory and does not authenticate other routes. Before exposing the app beyond this computer, add authentication, TLS, and appropriate network access controls.
+This is a single-user local application bound to loopback, with no general account/login layer. `TURTLE_INGEST_TOKEN` can protect the frame-ingestion and frame-inference endpoints; if configured, enter it under **Advanced connection settings** in either live page. It is held only in page memory and does not authenticate other routes. Before exposing the app beyond this computer, add authentication, TLS, and appropriate network access controls.
 
 Video jobs run in the local server process with per-frame commits. A restart marks unfinished jobs failed; completed frames remain reviewable, and the recording is retained for reprocessing. Re-uploading creates a new job and may create duplicate candidates for already-processed frames. Full durable job resumption and multi-user deployment are future extensions.
 

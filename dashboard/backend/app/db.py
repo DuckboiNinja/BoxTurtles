@@ -45,6 +45,8 @@ class Detection(Base):
     annotated_image_path: Mapped[str] = mapped_column(String)
     status: Mapped[str] = mapped_column(String, default="pending", index=True)
     reviewed_at: Mapped[str | None] = mapped_column(String, nullable=True)
+    review_method: Mapped[str | None] = mapped_column(String, nullable=True)
+    auto_accept_threshold: Mapped[float | None] = mapped_column(Float, nullable=True)
     model_id: Mapped[str] = mapped_column(String)
     model_name: Mapped[str] = mapped_column(String)
     is_mock: Mapped[bool] = mapped_column(default=False)
@@ -69,6 +71,8 @@ class RuntimeSettings(Base):
     confidence_threshold: Mapped[float] = mapped_column(Float, default=0.5)
     frame_interval_seconds: Mapped[float] = mapped_column(Float, default=3.0)
     max_frames: Mapped[int] = mapped_column(Integer, default=60)
+    auto_accept_enabled: Mapped[bool] = mapped_column(default=False)
+    auto_accept_threshold: Mapped[float] = mapped_column(Float, default=0.95)
 
 
 class ProcessingJob(Base):
@@ -96,4 +100,25 @@ def connect(storage):
         connection.execute("PRAGMA journal_mode=WAL")
 
     Base.metadata.create_all(engine)
+    # create_all preserves existing tables. Add new nullable audit fields and
+    # conservative settings without rewriting any prior records or reviews.
+    additions = {
+        "runtime_settings": {
+            "auto_accept_enabled": "BOOLEAN NOT NULL DEFAULT 0",
+            "auto_accept_threshold": "FLOAT NOT NULL DEFAULT 0.95",
+        },
+        "detections": {
+            "review_method": "VARCHAR",
+            "auto_accept_threshold": "FLOAT",
+        },
+    }
+    with engine.connect() as connection:
+        # Serialize startup migrations from multiple local server processes.
+        connection.exec_driver_sql("BEGIN IMMEDIATE")
+        for table, columns in additions.items():
+            present = {row[1] for row in connection.exec_driver_sql(f'PRAGMA table_info("{table}")')}
+            for column, declaration in columns.items():
+                if column not in present:
+                    connection.exec_driver_sql(f'ALTER TABLE "{table}" ADD COLUMN "{column}" {declaration}')
+        connection.commit()
     return engine, sessionmaker(engine, expire_on_commit=False)

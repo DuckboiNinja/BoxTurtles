@@ -12,7 +12,7 @@ test('dashboard and image inspector render without browser errors', async ({ pag
   await page.goto('/');
   await expect(page.getByRole('heading', { name: /Your survey, in focus/ })).toBeVisible();
   await expect(page.getByText('Demo workspace', { exact: true })).toBeVisible();
-  await expect(page.getByRole('navigation').getByRole('button')).toHaveCount(7);
+  await expect(page.getByRole('navigation').getByRole('button')).toHaveCount(8);
   await page.locator('.overview-actions').getByRole('button', { name: 'Upload media', exact: true }).click();
   await expect(page).toHaveURL(/#upload$/);
   await page.getByRole('button', { name: 'Asian Baddies home', exact: true }).click();

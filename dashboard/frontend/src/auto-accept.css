@@ -1,0 +1,16 @@
+.auto-accept-settings { padding: 26px 0; border-top: 1px solid var(--line); }
+.auto-accept-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 20px; }
+.auto-accept-heading h3 { display: flex; align-items: center; gap: 9px; margin: 0; color: var(--text); font-size: 1rem; font-weight: 600; }
+.auto-accept-toggle { display: flex; align-items: flex-start; gap: 12px; color: var(--text); line-height: 1.6; font-size: .85rem; cursor: pointer; }
+.auto-accept-toggle input { flex: 0 0 auto; width: 18px; height: 18px; margin-top: 4px; accent-color: var(--primary); }
+.auto-accept-threshold { display: flex; flex-direction: column; gap: 9px; margin: 20px 0 12px; font-size: .85rem; color: var(--text); }
+.auto-accept-threshold input { max-width: 220px; }
+.auto-accept-settings .help-text { margin-top: 12px; color: var(--muted); line-height: 1.8; font-size: .78rem; }
+.auto-accept-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 11px; padding: 14px 18px; margin-bottom: 22px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-soft); color: var(--muted); font-size: .78rem; line-height: 1.6; }
+.auto-accept-summary > svg { color: var(--accent); flex-shrink: 0; }
+.auto-accept-summary .text-button { margin-left: auto; }
+.auto-accept-audit { margin: 16px 0; }
+@media (max-width: 600px) {
+  .auto-accept-summary .text-button { margin-left: 0; }
+  .auto-accept-heading { align-items: flex-start; }
+}

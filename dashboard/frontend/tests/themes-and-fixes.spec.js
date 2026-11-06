@@ -5,7 +5,7 @@ import path from 'node:path';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const photo = readFileSync(path.join(root, 'examples/generated/synthetic-turtle.jpg'));
-const routes = ['dashboard', 'pending', 'sightings', 'map', 'upload', 'live', 'settings'];
+const routes = ['dashboard', 'pending', 'sightings', 'map', 'upload', 'live', 'live-model', 'settings'];
 const paint = page => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 
 async function contrastReadings(locator, textOnly = false) {

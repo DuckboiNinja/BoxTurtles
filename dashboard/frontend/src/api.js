@@ -4,6 +4,9 @@ export async function request(path, options = {}) {
   catch { throw new Error('Cannot reach the local server. Start the FastAPI backend and try again.'); }
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
+    if (path === '/inference/frame' && ((response.status === 404 && ['API route not found.', 'Not Found'].includes(body.error?.message || body.detail)) || response.status === 405)) {
+      throw new Error('The running backend does not support Live YOLO yet. Restart the app with website.py, then refresh this page and try again.');
+    }
     if (path === '/images/delete-rejected' && ((response.status === 404 && ['API route not found.', 'Not Found'].includes(body.error?.message || body.detail)) || response.status === 405)) {
       throw new Error('The running backend does not support photo deletion yet. Restart the app with website.py, then refresh this page and try again.');
     }
@@ -32,6 +35,13 @@ export const api = {
     body.append('file', blob, `scrcpy-frame-${sequence}.jpg`);
     body.append('envelope', JSON.stringify({ source: 'scrcpy-window', metadata: {}, frame_captured_at: frameCapturedAt }));
     return request('/ingest/frame', { method: 'POST', body, ...(token ? { headers: { 'X-Ingest-Token': token } } : {}) }).then(x => x.data);
+  },
+  inferFrame: (blob, token, sequence, frameCapturedAt, persistCandidates = false) => {
+    const body = new FormData();
+    body.append('file', blob, `scrcpy-model-frame-${sequence}.jpg`);
+    body.append('envelope', JSON.stringify({ source: 'scrcpy-window', metadata: {}, frame_captured_at: frameCapturedAt }));
+    body.append('persist_candidates', String(persistCandidates));
+    return request('/inference/frame', { method: 'POST', body, ...(token ? { headers: { 'X-Ingest-Token': token } } : {}) }).then(x => x.data);
   },
   review: (id, action) => request(`/detections/${id}/${action}`, { method: 'POST' }).then(x => x.data),
   deleteRejectedPhotos: imageIds => request('/images/delete-rejected', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image_ids: imageIds }) }).then(x => x.data),

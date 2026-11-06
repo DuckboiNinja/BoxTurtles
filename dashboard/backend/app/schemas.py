@@ -60,6 +60,8 @@ class SettingsUpdate(BaseModel):
     confidence_threshold: float = Field(ge=0.01, le=1)
     frame_interval_seconds: float = Field(ge=0.25, le=3600)
     max_frames: int = Field(ge=1, le=1000)
+    auto_accept_enabled: bool = False
+    auto_accept_threshold: float = Field(default=0.95, ge=0.01, le=1)
 
 
 class ModelRegistration(BaseModel):

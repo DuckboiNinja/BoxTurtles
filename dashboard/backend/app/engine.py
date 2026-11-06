@@ -55,6 +55,9 @@ class EngineSelection:
     threshold: float
     is_mock: bool
     detector: Detector
+    model_kind: str = "external"
+    auto_accept_enabled: bool = False
+    auto_accept_threshold: float = 0.95
 
 
 class EngineRegistry:
@@ -65,7 +68,9 @@ class EngineRegistry:
     def select(self, session, settings):
         from .db import DetectionModel
         if settings.active_model_id == "demo":
-            return EngineSelection("demo", "Demo simulator", settings.confidence_threshold, True, DemoDetector())
+            return EngineSelection("demo", "Demo simulator", settings.confidence_threshold, True, DemoDetector(),
+                                   model_kind="demo", auto_accept_enabled=settings.auto_accept_enabled,
+                                   auto_accept_threshold=settings.auto_accept_threshold)
         record = session.get(DetectionModel, settings.active_model_id)
         if record is None:
             raise ValueError("The active model is no longer registered. Choose a model in Settings.")
@@ -78,4 +83,6 @@ class EngineRegistry:
                 adapter = YoloDetector(path, record.labels)
                 self.cache.clear()  # Keep one loaded model to bound CPU memory.
                 self.cache[key] = adapter
-            return EngineSelection(record.id, record.name, settings.confidence_threshold, False, self.cache[key])
+            return EngineSelection(record.id, record.name, settings.confidence_threshold, False, self.cache[key],
+                                   model_kind="yolo", auto_accept_enabled=settings.auto_accept_enabled,
+                                   auto_accept_threshold=settings.auto_accept_threshold)
