@@ -1,44 +1,56 @@
-# Live video with Goggles N3, Android and MediaMTX
+﻿# Live video from your scrcpy window
 
-The website now has a **Live feed** page in the sidebar, plus a shortcut in Settings. It saves a MediaMTX browser-player URL in local SQLite and embeds that player when you choose **Open preview**. It does not start MediaMTX, connect the drone, or run live inference automatically.
+The **Live feed** page accepts a window shared by your desktop browser. With the phone already mirrored wirelessly in scrcpy on Ubuntu, share that scrcpy window to preview it in Asian Baddies. You can then start local turtle detection on sampled frames. No OBS, MediaMTX, stream URL, or additional video server is needed.
 
-## The connection path
+## Connect the existing mirror
 
 ```text
 Avata 2 → Goggles N3 → Android running DJI Fly
-                              ↓ publisher / screen-capture bridge
-                         Computer → MediaMTX → Asian Baddies Live feed
+                              ↓ wireless scrcpy
+                    scrcpy window on Ubuntu
+                              ↓ browser window sharing
+                    Asian Baddies Live feed
+                              ↓ optional sampled JPEG frames
+                    Local detection → review queue
 ```
 
-DJI documents USB-C live-view sharing from Goggles N3 to a smartphone. Connect a USB-C **data** cable, open DJI Fly, and enter the flight live view. If the phone is not recognized, try the goggles' **Settings → About → OTG Wired Connection to Mobile Device** option. The [DJI N3 support page](https://www.dji.com/support/product/goggles-n3) and [N3 product page](https://www.dji.com/goggles-n3) describe this capability. N3 has no direct HDMI port.
+1. Keep your working wireless scrcpy connection running and open the actual flight video on the phone. Confirm that the video appears in scrcpy.
+2. On that same Ubuntu desktop, open Asian Baddies at **http://localhost:8000** or **http://127.0.0.1:8000** and choose **Live feed**. HTTPS also supports browser window sharing; ordinary HTTP on a LAN IP does not provide the required secure browser context.
+3. Select **Share scrcpy window**, choose the scrcpy window in the browser/Ubuntu sharing picker, and approve sharing. Choose the phone mirror instead of the dashboard window to avoid capturing the dashboard recursively.
 
-MediaMTX receives a standard published stream and serves it to readers. It does not decode the Avata radio link or make the N3 a normal USB webcam. DJI's documented phone live view does not establish that direct RTMP publication is available in every N3/DJI Fly combination.
+The browser requires a fresh sharing choice for each connection; the website cannot silently select a window or restore permission after reloading. Only video is requested. Keep the scrcpy window available and check the preview before starting detection. The shared image includes any phone controls, DJI overlays, borders, or other visible content in that window.
 
-## Getting the phone's view onto the computer
+Use **Stop sharing** or the browser's sharing control to disconnect. Leaving the Live feed page also stops sharing and frame sampling. Sharing a window proves that the browser has a video source; it does not verify a drone connection or prove that the picture is current.
 
-There are two routes to investigate with your actual hardware:
+## Run local detection
 
-1. **If your connected DJI Fly setup exposes an RTMP publishing option**, point it to MediaMTX on the computer's LAN address. DJI's general [livestream guide](https://repair.dji.com/help/content?customId=01700006727&lang=en&paperDocType=ARTICLE&re=US&spaceId=17) describes RTMP, but does not confirm every N3/Avata 2 combination. Confirm the option is present first.
-2. **A capture bridge:** mirror Android to the computer over Wi-Fi, capture that visible window in OBS, and publish from OBS to MediaMTX. [scrcpy](https://github.com/Genymobile/scrcpy) is a free Android mirroring tool with [TCP/IP connection instructions](https://github.com/Genymobile/scrcpy/blob/master/doc/connection.md). A wireless connection leaves the phone's USB-C port available for the N3 cable. Android wireless-debugging setup depends on the phone/version. Verify that DJI Fly's actual video appears in the mirrored window; a black or protected video surface needs a different source bridge.
+Previewing alone does not save frames or run inference. After checking the image:
 
-The capture route is a proposed integration path, not a hardware-tested guarantee. No drone, goggles, or phone is connected to this development workspace. No mirroring software, OBS, or MediaMTX was installed automatically.
+1. Choose the local detector in **Settings**. The demo engine remains available without a model, drone, Ultralytics, or paid services, and its results are visibly marked as simulated.
+2. Set a sampling interval and session frame limit on **Live feed**. The defaults are one frame every **5 seconds**, up to **60 frames**. The interval accepts **1–3600 seconds** and the limit **1–1000 frames**.
+3. If the backend uses `TURTLE_INGEST_TOKEN`, expand **Advanced connection settings** and enter the matching **Ingest token**. The token is held only in the current page's memory.
+4. Select **Start detection**. Each sampled JPEG is sent to the existing `/api/ingest/frame` endpoint and processed by the active local detector. Candidates appear in the normal review workflow, with their source and model provenance preserved.
 
-## MediaMTX setup and a first preview
+The page sends one frame at a time. The interval is the minimum time between sampling starts: after inference finishes, the sampler waits only for the remaining interval. If inference takes longer than the interval, the next frame starts after completion without queuing stale frames. Sampling stops on the frame limit, an error, **Stop detection**, the end or temporary pause of window sharing, navigation away, or hiding the dashboard tab. Return to the visible tab and select **Start detection** to resume after a pause. A frame already submitted may finish processing and remain stored after stopping. Original submitted frame bytes, rejected candidates, crops, and annotations follow the existing retention rules.
 
-1. Follow the official [MediaMTX installation guide](https://mediamtx.org/docs/kickoff/install) on your computer. Use a local installation; no paid hosting is required.
-2. Publish video to a path such as `turtle`. For OBS RTMP publication, MediaMTX's [OBS guide](https://mediamtx.org/docs/publish/obs-studio) uses a Custom service, server URL `rtmp://127.0.0.1:1935/turtle`, and an empty stream key. A phone publisher must use the **computer's LAN IP**, not `127.0.0.1`, and the computer must accept the intended LAN connection.
-3. For a first test with a typical OBS output, try the **HLS** browser player at `http://127.0.0.1:8888/turtle`. Open it directly and check that video plays.
-4. In Asian Baddies, choose **Live feed → HLS**, enter that browser-player address, select **Save source**, then **Open preview**.
-5. For lower latency, MediaMTX also exposes the **WebRTC** player at `http://127.0.0.1:8889/turtle`. Codec support and network requirements differ; the publisher must produce tracks the browser can decode. MediaMTX does not automatically transcode incompatible tracks. See [browser playback](https://mediamtx.org/docs/read/web-browsers) and [WebRTC browser codec support](https://mediamtx.org/docs/read/webrtc#codec-support-in-browsers).
+This is sampled detection, not inference on every video frame. Adjust the interval for your computer's inference speed and storage needs. The browser shares the scrcpy window as displayed; ensure the flight view is visible before sending frames. Submitted images preserve the full shared frame and its aspect ratio, reducing its longest edge to at most 1920 pixels without enlarging smaller frames. Frames are encoded as JPEG at quality 0.92.
 
-Use the player-page address, not `rtsp://...`, `rtmp://...`, a `.m3u8` playlist, or a `/whep` endpoint. On another viewing computer, replace loopback with the MediaMTX host's LAN address. `127.0.0.1` always refers to the device opening the address.
+## Metadata and provenance
 
-The embedded player shows its own playback/connection errors. Asian Baddies deliberately says **Preview requested**, rather than claiming a live drone is connected based on an iframe loading. You can reload or stop the preview at any time. Saving a URL does not initiate a connection; reopening the page does not auto-connect.
+The browser sends an envelope with `source: "scrcpy-window"`, empty original-camera `metadata`, a timezone-aware `frame_captured_at`, and no upstream detections. The timestamp is measured when the image is copied from the preview, before JPEG encoding, upload, or model processing. The backend runs the active detector and retains its model identity and mock status.
 
-## Detection and metadata
+New snapshots show **Live frame captured** in the inspector and retain `browser frame capture` provenance. This is the browser snapshot time, recorded to milliseconds and displayed with seconds; the browser clock and any video-mirroring delay affect its relationship to the camera's original exposure time. Explicit original capture metadata takes precedence if available. Earlier saved frames are not backfilled from upload time. Latitude and longitude remain null unless actual GPS is supplied, and these frames do not become map observations without GPS. CSV exports include the timestamp source.
 
-This page provides **video viewing only**. The cross-origin MediaMTX iframe does not expose decoded frames to Asian Baddies. A future server-side stream sampler should read a suitable MediaMTX source, sample frames, and POST them to `/api/ingest/frame` with synchronized metadata. This keeps source transport independent from the local detection model.
+The dashboard does not decode DJI's radio protocol or use a DJI live SDK. Hardware transport stays separate from the detector. Recorded media remains available through **Upload media**.
 
-GPS and original camera timestamps must come from actual telemetry; a video relay or Android screen mirror does not automatically provide them. Do not use preview time as the original capture time. The current ingestion API and recorded-video workflow already preserve missing metadata and provenance.
+## Ubuntu troubleshooting
 
-To process footage today, use **Upload media → Video**. Live inference remains explicitly off until a frame bridge is implemented and tested with the actual hardware.
+- **No sharing picker:** use a desktop browser with screen-capture support and open the dashboard through localhost, loopback, or HTTPS. Screen capture needs a direct user click.
+- **A Wayland picker does not open or offers no usable source:** check Ubuntu's PipeWire and desktop-portal screen-sharing support for your desktop session and browser. The website cannot supply or repair the operating system's capture portal.
+- **Black, frozen, or wrong image:** first check scrcpy itself, select its actual window again, and keep the mirrored flight view visible. Minimized or hidden windows can behave differently across desktop sessions. Protected phone video may not be capturable.
+- **Detection stops with a token error:** enter the backend's configured ingestion token and start detection again.
+- **Detection reports a model error:** check the active model and its local path in Settings. Demo mode provides a model-free way to verify the workflow; its candidates are simulated.
+
+No drone, goggles, or Ubuntu screen-sharing session is available in this Windows development workspace. Real capture with the user's Ubuntu browser and actual DJI video still requires a hardware check; automated browser fixtures can validate preview and ingestion behavior independently.
+
+References: [scrcpy](https://github.com/Genymobile/scrcpy), [scrcpy TCP/IP connections](https://github.com/Genymobile/scrcpy/blob/master/doc/connection.md), and [browser screen capture](https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/getDisplayMedia).

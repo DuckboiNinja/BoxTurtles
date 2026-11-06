@@ -49,6 +49,15 @@ def supplied(metadata: Metadata, provenance="manual"):
     return CaptureMetadata(metadata.latitude, metadata.longitude, metadata.captured_at.isoformat() if metadata.captured_at else None, {"gps": provenance, "captured_at": provenance})
 
 
+def live_frame_timestamp(metadata: CaptureMetadata, captured_at: datetime | None):
+    """Use a measured mirror snapshot time only when original time is absent."""
+    if captured_at is not None and not metadata.captured_at:
+        metadata.captured_at = captured_at.isoformat()
+        metadata.provenance["captured_at"] = "browser frame capture"
+        metadata.warnings.append("Live mirror snapshot time comes from the browser's clock. The mirrored view may be delayed; this is not the original camera capture time.")
+    return metadata
+
+
 def parse_capture(value: str | None):
     if not value or not value.strip():
         return None

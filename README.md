@@ -68,8 +68,10 @@ The annotated dataset is privately hosted on Kaggle and is not included in this 
 
 ## Turtle Survey Dashboard
 
-The [dashboard](dashboard/README.md) adds a local website for reviewing turtle detections from uploaded photographs and recorded DJI Avata 2 footage. Its **Asian Baddies** interface includes light/dark themes, a review queue, verified sightings, maps, video frame sampling, replaceable YOLO adapters and a MediaMTX preview setup page.
+The [dashboard](dashboard/README.md) adds a local website for reviewing turtle detections from uploaded photographs, recorded DJI Avata 2 footage, and sampled frames from a browser-shared scrcpy window. Its **Asian Baddies** interface includes light/dark themes, adjustable thumbnails and list view, previous/next image inspection, bulk review, confirmed deletion of rejected photos, verified sightings, maps, and replaceable local YOLO adapters.
 
-Demo mode works without a model file, drone or paid API. The live page is a browser preview; the Goggles N3/Android bridge and live inference still need hardware integration. The model's aerial accuracy remains unverified.
+Demo mode works without a model file, drone or paid API. The live page previews your shared scrcpy window and can run the selected model on sampled frames, with sampling help and session limits. Live snapshots retain their measured browser capture time and its provenance; missing GPS stays unknown. Actual DJI capture quality and the model's aerial accuracy still require field verification.
+
+The launcher recognizes an already-running dashboard instead of starting another server on port 8000. See the [dashboard guide](dashboard/README.md) for photo management, live-feed setup, and backend restart instructions.
 
 After cloning this repository, open `dashboard/` and follow its [Windows/Linux installation instructions](dashboard/README.md#fresh-installation-windows). Use Python 3.11/3.12 and Node.js 22.12 or newer; dependencies and runtime data are not committed. The original training notebook remains at the repository root.

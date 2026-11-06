@@ -18,10 +18,11 @@ from starlette.concurrency import run_in_threadpool
 from .config import ROOT, Config
 from .db import CapturedImage, Detection, DetectionModel, ProcessingJob, RuntimeSettings, connect, now, uid
 from .demo import seed_demo
+from .deletion import delete_rejected_photos
 from .engine import EngineRegistry
 from .ingestion import decode_image, process_video, save_frame
-from .metadata import read_telemetry, supplied
-from .schemas import IngestEnvelope, Metadata, ModelRegistration, SettingsUpdate
+from .metadata import live_frame_timestamp, read_telemetry, supplied
+from .schemas import IngestEnvelope, Metadata, ModelRegistration, RejectedPhotoDeletion, SettingsUpdate
 from .streams import router as streams_router
 
 logger = logging.getLogger(__name__)
@@ -167,6 +168,10 @@ def create_app(config: Config | None = None):
     def reset(detection_id: str, session=Depends(db)):
         return review(detection_id, "pending", session)
 
+    @app.post("/api/images/delete-rejected")
+    def delete_rejected(payload: RejectedPhotoDeletion, session=Depends(db)):
+        return {"data": delete_rejected_photos(session, storage, payload.image_ids)}
+
     @app.get("/api/sightings")
     def sightings(limit: int = Query(1000, ge=1, le=1000), offset: int = Query(0, ge=0), session=Depends(db)):
         return detections("verified", limit, offset, session)
@@ -244,8 +249,9 @@ def create_app(config: Config | None = None):
         content = await read_limited(file, min(config.max_upload_mb, 50) * 1024 * 1024)
         try:
             image, embedded = await run_in_threadpool(decode_image, content)
+            capture = live_frame_timestamp(embedded.apply(supplied(payload.metadata, "upstream source")), payload.frame_captured_at)
             record, created = await run_in_threadpool(save_frame, session, storage, image, Path(file.filename or "frame.jpg").name, payload.source,
-                                                      embedded.apply(supplied(payload.metadata, "upstream source")), selection=active, candidates=payload.detections,
+                                                      capture, selection=active, candidates=payload.detections,
                                                       model_id=payload.model_id, model_name=payload.model_name, is_mock=payload.is_mock, original_bytes=content)
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc

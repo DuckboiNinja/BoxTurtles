@@ -5,6 +5,8 @@ flowchart LR
   Photos[Photo upload] --> Normalize[Image normalization + metadata]
   Video[Recorded video + CSV/SRT] --> Frames[Selected frames + timestamp offsets]
   Frames --> Normalize
+  Scrcpy[scrcpy window shared by browser] --> Sampler[Browser JPEG sampler]
+  Sampler --> Ingest
   Future[Future network / ROS 2 bridge] --> Ingest[Frame ingestion API]
   Ingest --> Normalize
   Normalize --> Engine[Detector protocol]
@@ -51,7 +53,7 @@ To add another inference backend, implement the protocol, validate output using 
 
 Omit `detections` or use `null` to run the active local engine. Supply `[]` to record a frame with no upstream candidates without running the engine. Supplied detections retain upstream scores and are not re-thresholded. Set `is_mock=true` for upstream simulation. Metadata may be `{}`; absent fields remain null. Coordinates must be paired and finite. Boxes must have positive area, be finite, and fit the image. Byte limits are enforced while reading.
 
-An independent source adapter can repeatedly POST frames to this endpoint, with synchronized metadata. This contract does not open a camera, negotiate a video stream, use a DJI SDK, or provide backpressure. A future ROS 2 bridge or stream decoder owns transport, frame-rate control, reconnect behavior, and clock synchronization; it submits the same frame envelope.
+An independent source adapter can repeatedly POST frames to this endpoint, with synchronized metadata when available. The Live feed page is one such adapter: it samples browser-shared scrcpy video and submits `{"source":"scrcpy-window","metadata":{},"frame_captured_at":"2026-11-06T12:34:56.789Z"}`, leaving absent GPS null and allowing the active local engine to run. The optional top-level `frame_captured_at` requires a timezone and is accepted only for `scrcpy-window`; other sources use original capture metadata as before. This contract does not open a camera, negotiate a video stream, use a DJI SDK, or provide backpressure. The browser sampler, future ROS 2 bridge, or other stream decoder owns transport, frame-rate control, reconnect behavior, and clock synchronization; each submits the same frame envelope.
 
 Example with curl on Linux (use `curl.exe` and adapted paths on Windows):
 
@@ -73,6 +75,10 @@ Manual video GPS represents a constant provided location. Supply a trajectory CS
 
 `CapturedImage` has many `Detection` records. Each candidate gets an independent crop/annotation and review status. The normalized full frame is stored once; uploaded original bytes are also retained as `source.bin` alongside it. Verification only updates the candidate status and review timestamp. Rejections retain all media for later analysis. `verified` records are sightings; they are not copied into another table.
 
+Explicit rejected-photo deletion is the exception to default retention. `POST /api/images/delete-rejected` accepts a bounded list of image UUIDs after the UI lists the photos and asks for permanent-deletion confirmation. A SQLite writer lock precedes validation; every associated detection must still be rejected. Missing photos, active siblings, unsafe paths, or failed media staging abort the entire batch. Individual bulk reviews continue to use the existing conditional review endpoints; partial failures stay selected for retry.
+
+Deletion moves unshared selected media into private `.deletion-staging/<batch>/` before removing database rows. A manifest maps staged filenames back to safe media-relative paths and records the selected image IDs. Failed precommit operations restore the media and roll back the rows. Committed deletions unlink the staged files; an OS cleanup failure returns success with `cleanup_pending=true`, retaining private bytes and the manifest for manual cleanup. Recovery after an interrupted process is manual: inspect the manifest and database before restoring any staged paths or removing committed deletion leftovers. Source videos, unrelated files, and media referenced by surviving records remain untouched. No recursive directory deletion is used.
+
 Conditional SQL updates enforce valid transitions even when two requests race:
 
 ```text
@@ -85,13 +91,19 @@ Every other transition returns HTTP 409. SQLite uses foreign keys, WAL, and a bu
 
 ## Local execution
 
-### Live preview boundary
+### Live capture boundary
 
-`backend/app/streams.py` stores the chosen MediaMTX browser-player URL and WebRTC/HLS preference in a separate `live_sources` table. `GET/PUT /api/live-source` do not fetch a URL, probe a device, load a model, or start inference. Existing image/detection tables and models are independent of this configuration.
+`frontend/src/LiveFeed.jsx` requests a browser `getDisplayMedia` video stream only after the user selects **Share scrcpy window**. The desktop/browser picker chooses the scrcpy window; the website cannot select it silently or persist screen-sharing permission. The browser runs on the Ubuntu desktop that displays scrcpy and needs localhost, loopback, or HTTPS. No audio, relay server, DJI SDK, or network-video interface is assumed.
 
-`frontend/src/LiveFeed.jsx` embeds the MediaMTX player only after an explicit Open preview click. Its status says Preview requested; an iframe load does not prove that a drone is connected or frames are playing. Stream errors remain in the MediaMTX player. Live inference and connection verification remain false. Recorded media and `/api/ingest/frame` retain their original behavior.
+The returned stream is attached to a local video preview. Preview alone does not submit frames. **Start detection** enables a bounded sampler: capture one JPEG from the decoded video, POST it to `/api/ingest/frame`, then wait the remaining portion of the chosen start-to-start interval. Only one request is in flight; inference taking longer than the interval slows sampling without queuing stale frames. The default interval is five seconds and the default session limit is 60 frames. The optional **Ingest token** is under **Advanced connection settings**, held in page memory, and sent as `X-Ingest-Token`.
 
-The user has Goggles N3 and Android. DJI documents wired USB-C live-view sharing to DJI Fly, while a publisher/capture bridge still needs to deliver that view to MediaMTX. See [the hardware-specific guide](LIVE_FEED.md) for the proposed integration path and its verification limits. Frame extraction from this cross-origin player is not used for inference.
+Frame encoding preserves the entire shared image and its aspect ratio. A scale of `min(1, 1920 / max(videoWidth, videoHeight))` caps the longest edge at 1920 pixels without enlarging smaller sources. The canvas encodes JPEG at quality 0.92; no automatic cropping removes phone controls, overlays, or borders.
+
+Each envelope identifies `scrcpy-window` and supplies empty original-camera metadata plus the measured frame snapshot time. `new Date().toISOString()` is captured immediately before drawing the shared video frame onto the snapshot canvas, so encoding, HTTP delays, and model processing do not shift it. If original capture metadata is absent, the backend stores this value in `captured_at` with provenance `browser frame capture` and a clock/mirroring-delay warning. The inspector labels it **Live frame captured**, and CSV includes `capture_time_source`; it is not presented as original camera exposure time. Explicit upstream or EXIF original capture metadata wins. Missing/legacy frame timestamps remain null, and there is no backfill. GPS remains unknown unless actually supplied. The active detector chooses real or simulated inference, retains model/mock provenance, and preserves the sampled JPEG bytes as before.
+
+Sampling stops on an error, frame limit, manual stop, track ending or muting, document visibility becoming hidden, or page teardown. Unmuting or returning to the visible tab does not restart detection automatically. Page teardown also releases capture tracks. A submitted frame may still finish on the server after a stop. A captured window is not proof of a current drone feed; the user checks the actual mirrored content. Phone controls and overlays remain in the captured image. See [the scrcpy guide](LIVE_FEED.md) for the workflow and Ubuntu capture limitations.
+
+The previous `backend/app/streams.py`, `live_sources` table, and `GET/PUT /api/live-source` routes remain as legacy configuration compatibility. The current frontend neither reads them nor uses their saved player addresses. Their static connection/inference flags describe only that legacy configuration, not the browser's active capture session.
 
 ### Readability
 
@@ -103,9 +115,9 @@ The Spotify-inspired composition uses a compact sidebar, neutral surfaces and ro
 
 Frontend refreshes use revision numbers to discard snapshots started before a review or settings save. Explicit media refreshes queue behind an active poll. Failed statistics refreshes do not undo a successful review. User-entered capture times without a timezone stay naive and flagged; no browser timezone is guessed.
 
-FastAPI serves the built React frontend and media. Video jobs run via background tasks; inference and image CPU work use worker threads. Frontend polling refreshes every five seconds while visible. There are no cloud model calls, model downloads, purchase flows, or DJI SDK dependencies. OpenStreetMap tiles and an explicitly opened MediaMTX player make browser requests outside the local app.
+FastAPI serves the built React frontend and media. Video jobs run via background tasks; inference and image CPU work use worker threads. Frontend polling refreshes every five seconds while visible. There are no cloud model calls, model downloads, purchase flows, or DJI SDK dependencies. Live capture stays between the desktop browser and local ingestion endpoint; OpenStreetMap tiles make browser requests outside the local app.
 
-Real YOLO validation requires the user's trusted .pt weights and representative survey media. GPU optimization, live source adapters, durable task queues, migrations for future schema changes, deduplication across reprocessing jobs, and multi-user access control are independent future work.
+Real YOLO validation requires the user's trusted .pt weights and representative survey media. Ubuntu screen sharing and the actual DJI image require field validation. GPU optimization, other source adapters, durable task queues, migrations for future schema changes, deduplication across reprocessing jobs, and multi-user access control are independent future work.
 
 ## Implementation references
 
@@ -113,3 +125,5 @@ Real YOLO validation requires the user's trusted .pt weights and representative 
 - [FastAPI background tasks](https://fastapi.tiangolo.com/tutorial/background-tasks/)
 - [Ultralytics prediction interface and box results](https://docs.ultralytics.com/modes/predict/)
 - [Vite setup and runtime requirements](https://vite.dev/guide/)
+- [Browser screen capture](https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/getDisplayMedia)
+- [scrcpy wireless connections](https://github.com/Genymobile/scrcpy/blob/master/doc/connection.md)

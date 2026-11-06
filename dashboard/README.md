@@ -1,6 +1,6 @@
 # Asian Baddies · Turtle survey workspace
 
-A local, responsive turtle detection dashboard for **recorded DJI Avata 2 footage and uploaded photographs**. Demo mode is the default and works without a drone, model file, PyTorch, or paid API.
+A local, responsive turtle detection dashboard for **recorded DJI Avata 2 footage, uploaded photographs, and sampled video from a shared scrcpy window**. Demo mode is the default and works without a drone, model file, PyTorch, or paid API.
 
 ## Start on this computer
 
@@ -14,6 +14,10 @@ In the GitHub repository, this application is in `dashboard/`; run the setup com
 ```
 
 Open **http://127.0.0.1:8000**. API documentation is at **http://127.0.0.1:8000/docs**. Stop with Ctrl+C. The launcher rebuilds the frontend when its source changes; it never installs packages or downloads models automatically.
+
+If the dashboard is already running, launching it again prints the existing address and exits successfully. It does not start a second server or touch the database. If another application occupies port 8000, the launcher explains the conflict and leaves that application running. To restart an existing dashboard after backend changes, stop its original server first.
+
+After changing Python backend files, stop and restart `website.py` once, then refresh the browser. Refreshing alone can load new buttons while the previous API process is still running. If photo deletion reports an unsupported route, restart the backend before retrying; a missing route does not delete any files.
 
 ## Fresh installation: Windows
 
@@ -33,7 +37,7 @@ cd ..
 
 If Windows points `python` to a Store shortcut, use `py -3.12` or the full path to your installed interpreter. The portable tooling in `.tools/` is optional and specific to this development workspace.
 
-## Fresh installation: Linux Mint
+## Fresh installation: Ubuntu or Linux Mint
 
 With Python 3.11/3.12, the matching `python3-venv` package, and Node.js 22 LTS installed:
 
@@ -59,9 +63,17 @@ FFmpeg/`ffprobe` is optional for embedded video capture tags. Without it, video 
 - **Turtle map:** OpenStreetMap/Leaflet markers for verified records with GPS. Marker popups open the sighting. Fit all markers with the expand button. Missing locations never become map markers.
 - **Upload media:** multiple photographs or one video at a time, optional GPS/capture time, configurable frame sampling, external CSV/SRT telemetry, and processing progress.
 - **Settings:** select the demo engine or a registered .pt model, change confidence and video defaults, and register more models by their backend-local paths.
-- **Live feed:** save a MediaMTX WebRTC/HLS browser-player address, open/reload/stop the embedded preview, and follow the Goggles N3/Android connection guide. Video preview is separate from live inference, which remains off. See [Live feed setup](docs/LIVE_FEED.md).
+- **Live feed:** share your existing scrcpy window through the desktop browser, preview it, then optionally start sampled local detection using the active model. Set a frame interval and session limit; stop sharing or leave the page to disconnect. Open the dashboard on the Ubuntu computer displaying scrcpy through localhost, loopback, or HTTPS. No OBS or MediaMTX is needed. See [Live feed setup](docs/LIVE_FEED.md).
 
 The **Text size** menu in the top bar offers Standard, Large (default), and Extra large. The selection is saved in this browser. The interface uses larger labels, higher-contrast secondary text, larger controls, and responsive layouts on wide and small screens.
+
+The **View** menu above the pending, verified, and rejected files offers small, medium, or large thumbnails and a compact list. Your browser remembers the choice. Open a file and use **Previous / Next** in the inspector header or the Left/Right arrow keys to browse the current results in their selected sort order. Navigation stays above the photo so it does not cover the image. The inspector shows your position, retains the frame/crop/annotation and box choices between files, and stops at the first and last result. New detections arriving during inspection appear in the collection when you close the inspector.
+
+Use each file's checkbox or **Select all matching** to manage several detections together. Selection follows the current filters and remains selected when switching between thumbnails and list view. Pending items offer **Confirm selected / Reject selected**; verified or rejected items offer **Restore selected**. Individual reviews are saved independently; if one fails, successful reviews remain saved and the remaining selection can be retried.
+
+In **Rejected archive**, **Delete selected photos** lists the affected original photos and the number of associated rejected detections before you confirm permanent removal. Every detection on a photo must be rejected, including candidates outside the current filter. Pending or verified siblings block deletion. The server rechecks this when you confirm and rejects the entire deletion batch if a photo's status changed. Selected originals, their original-byte copies, crops, and annotations are removed; unrelated photos, shared media, and source videos are kept. This action cannot be undone.
+
+The **info buttons** beside frame sampling fields explain their units and effects. For the live feed, a **5-second frame interval** checks about **12 still frames per minute**, subject to processing speed. **Maximum frames per session** is a cap on sampled frames, not turtle candidates: a limit of 60 stops detection after at most 60 frames while keeping the preview available. Recorded-video sampling uses seconds of the original recording and has its own maximum-frame cap.
 
 The **Light/Dark** button beside Text size switches the entire workspace theme. Dark is the default; your browser saves the choice. The Spotify-inspired layout uses neutral surfaces, a compact sidebar, rounded controls and a green accent. Dark mode pairs bright green primary buttons with dark text; light mode pairs deep green buttons with white text. Disabled controls remain readable. The map follows the selected theme; photos keep their original colors. Dashboard review actions remain available on mobile.
 
@@ -98,6 +110,8 @@ Demo mode needs no ML packages. When you have a trusted local model:
 .\.venv\Scripts\python.exe -m pip install -r requirements-yolo.txt
 ```
 
+Use the same Python environment that runs `website.py`. If it reports `No module named pip`, run `.\.venv\Scripts\python.exe -m ensurepip --upgrade`, then retry the install. After installation, restart the dashboard before selecting the model again. The same installation is described in the [Ultralytics setup guide](https://docs.ultralytics.com/quickstart/).
+
 1. Open Settings and register its `.pt` path **on the computer running FastAPI**, name, and candidate class labels.
 2. Select it, choose the threshold, and save. Activation loads the model and reports errors before changing the saved engine.
 3. Upload new media. Inference runs locally on CPU; existing records keep their original model provenance.
@@ -113,6 +127,7 @@ Class matching is case insensitive. Use the exact labels in your model, such as 
 - SRT supports explicit `latitude` and `longitude`/`longtitude` fields and recognizable timestamps. DJI subtitle formats differ; unsupported layouts are rejected with a CSV alternative, rather than guessed.
 - Matching uses the nearest sample within two seconds by default, configurable with `TURTLE_TELEMETRY_TOLERANCE_SECONDS`. GPS is not interpolated. An absolute telemetry timestamp is adjusted by the frame-to-sample offset.
 - Missing GPS/capture time remains null. Upload time and filesystem modification time are never substituted for capture time.
+- New shared scrcpy frames record the browser's UTC timestamp at the instant the frame is copied from the preview, before JPEG encoding or upload. This appears as **Live frame captured**, with seconds and `browser frame capture` provenance. It uses the browser's clock and may differ from the camera's exposure time because the mirrored video can be delayed. GPS stays null. Explicit original camera metadata takes precedence when supplied; old records without a measured timestamp stay unchanged. CSV export includes `capture_time_source` to distinguish these timestamps.
 
 See `examples/telemetry.csv`, `examples/telemetry.srt`, and [the interface specification](docs/ARCHITECTURE.md).
 
@@ -152,6 +167,7 @@ Successful responses use `{ "data": ... }`. Lists include pagination metadata wh
 | `POST /api/detections/{id}/verify` | Pending → verified |
 | `POST /api/detections/{id}/reject` | Pending → rejected |
 | `POST /api/detections/{id}/reset` | Verified/rejected → pending |
+| `POST /api/images/delete-rejected` | Permanently delete explicitly selected photos only when all their detections are rejected; JSON `{"image_ids":["UUID", "..."]}` (1–1000 IDs) |
 | `GET /api/sightings` | Paginated verified detections |
 | `GET /api/stats` | Aggregate statistics |
 | `POST /api/upload` | Multipart image file + JSON `metadata` |
@@ -160,7 +176,7 @@ Successful responses use `{ "data": ... }`. Lists include pagination metadata wh
 | `GET /api/jobs`, `GET /api/jobs/{id}` | Video job progress/errors |
 | `GET /api/settings`, `PUT /api/settings` | Detection/video settings |
 | `GET /api/models`, `POST /api/models` | Register/selectable local models |
-| `GET /api/live-source`, `PUT /api/live-source` | Persist MediaMTX browser-player configuration; no network connection or inference starts |
+| `GET /api/live-source`, `PUT /api/live-source` | Legacy saved player configuration; unused by the current scrcpy capture page |
 
 Repeated or conflicting reviews return **409**, rather than duplicate sightings. A reset is required before another review. The verified record references the same image and detection; files are not moved or duplicated during verification.
 
@@ -175,13 +191,13 @@ BoxTurtleProject/
     engine.py        # Demo and lazy local YOLO adapters
     ingestion.py     # Frame storage, crops, annotations, video jobs
     metadata.py      # EXIF, video tags, CSV/SRT synchronization
-    streams.py       # Saved MediaMTX browser-player configuration
+    streams.py       # Legacy saved player configuration compatibility
     demo.py          # Offline synthetic fixtures
     config.py        # Environment configuration
   frontend/
     src/App.jsx      # Dashboard, review, sightings, uploads, settings
     src/MapView.jsx  # Leaflet map and sighting popups
-    src/LiveFeed.jsx # MediaMTX preview and N3/Android connection guide
+    src/LiveFeed.jsx # Browser-shared scrcpy preview and sampled local detection
     src/api.js       # Shared API client
     src/styles.css   # Tailwind and responsive theme
     src/readability.css # Readable typography, text scale and layouts
@@ -197,7 +213,7 @@ BoxTurtleProject/
   requirements*.txt, .env.example
 ```
 
-This is a single-user local application bound to loopback, with no general account/login layer. `TURTLE_INGEST_TOKEN` can protect the future frame-ingestion endpoint; it does not authenticate other routes. Before exposing the app beyond this computer, add authentication, TLS, and appropriate network access controls.
+This is a single-user local application bound to loopback, with no general account/login layer. `TURTLE_INGEST_TOKEN` can protect the frame-ingestion endpoint; if configured, enter it in the Live feed page's optional token field. It is held only in page memory and does not authenticate other routes. Before exposing the app beyond this computer, add authentication, TLS, and appropriate network access controls.
 
 Video jobs run in the local server process with per-frame commits. A restart marks unfinished jobs failed; completed frames remain reviewable, and the recording is retained for reprocessing. Re-uploading creates a new job and may create duplicate candidates for already-processed frames. Full durable job resumption and multi-user deployment are future extensions.
 

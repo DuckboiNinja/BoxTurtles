@@ -1,28 +1,33 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Activity, ArrowDownToLine, ArrowRight, ArrowUpRight, Boxes, CalendarDays, Check, CheckCheck, ChevronDown, ChevronRight, CircleCheck, CircleHelp, Clock3, Cpu, Crosshair, Eye, FileImage, Film, Focus, FolderOpen, ImagePlus, LayoutDashboard, LoaderCircle, Map, MapPin, Menu, Moon, Plane, Plus, RefreshCw, ScanLine, Search, Settings2, ShieldCheck, SlidersHorizontal, Sprout, Sun, Upload, X, XCircle } from 'lucide-react';
+import { Activity, ArrowDownToLine, ArrowRight, ArrowUpRight, Boxes, CalendarDays, Check, CheckCheck, ChevronDown, ChevronLeft, ChevronRight, CircleCheck, CircleHelp, Clock3, Cpu, Crosshair, Eye, FileImage, Film, Focus, FolderOpen, ImagePlus, LayoutDashboard, LayoutGrid, List, LoaderCircle, Map as MapIcon, MapPin, Menu, Moon, Plane, Plus, RefreshCw, ScanLine, Search, Settings2, ShieldCheck, SlidersHorizontal, Sprout, Sun, Upload, X, XCircle } from 'lucide-react';
 import { api } from './api.js';
 import MapView from './MapView.jsx';
 import LiveFeed from './LiveFeed.jsx';
+import SamplingFields from './SamplingFields.jsx';
+import { DeletePhotoDialog, FileSelection, SelectionToolbar } from './PhotoManagement.jsx';
 
 const NAV = [
   ['dashboard', 'Dashboard', LayoutDashboard], ['pending', 'Pending detections', ScanLine],
-  ['sightings', 'Verified sightings', ShieldCheck], ['map', 'Turtle map', Map],
+  ['sightings', 'Verified sightings', ShieldCheck], ['map', 'Turtle map', MapIcon],
   ['upload', 'Upload media', Upload], ['live', 'Live feed', Eye], ['settings', 'Settings', Settings2],
 ];
 const shortId = value => value?.slice(0, 8).toUpperCase();
 const percent = value => `${Math.round(value * 100)}%`;
+const THUMBNAIL_RATIO = 4 / 3;
 const captureOrder = (a, b, oldest = false) => {
   if (!a.captured_at && !b.captured_at) return 0;
   if (!a.captured_at) return 1;
   if (!b.captured_at) return -1;
   return (new Date(a.captured_at).getTime() - new Date(b.captured_at).getTime()) * (oldest ? 1 : -1);
 };
-const stamp = value => {
+const stamp = (value, precise = false) => {
   if (!value) return 'Capture time missing';
   const unknownZone = !/([+-]\d{2}:\d{2}|Z)$/.test(value);
   if (unknownZone) return `${value.slice(0, 16).replace('T', ' ')} · timezone unknown`;
-  return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' }).format(new Date(value));
+  return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', ...(precise ? { second: '2-digit' } : {}), timeZoneName: 'short' }).format(new Date(value));
 };
+const isLiveFrameTime = item => item.metadata?.provenance?.captured_at === 'browser frame capture';
+const captureStamp = item => stamp(item.captured_at, isLiveFrameTime(item));
 const coordinates = item => Number.isFinite(item.latitude) && Number.isFinite(item.longitude) ? `${item.latitude.toFixed(5)}, ${item.longitude.toFixed(5)}` : 'GPS unavailable';
 
 function TurtleMark({ size = 30 }) {
@@ -38,7 +43,7 @@ function Empty({ icon: Icon = ScanLine, title, children, action }) {
 function DetectionImage({ item, boxes = true, crop = false, large = false }) {
   const [x1, y1, x2, y2] = item.bounding_box;
   return <div className={`detection-image ${large ? 'large' : ''}`} style={{ aspectRatio: crop ? '1' : `${item.width}/${item.height}` }}>
-    <img src={crop ? item.cropped_url : item.original_url} alt={crop ? `Cropped ${item.class_name} candidate` : `Captured frame ${item.filename}`} loading={large ? 'eager' : 'lazy'} />
+    <img src={crop ? item.cropped_url : item.original_url} alt={crop ? `Cropped ${item.class_name} candidate` : `Captured frame ${item.filename}`} loading={large ? 'eager' : 'lazy'} draggable={false} />
     {!crop && boxes && <div className="detection-box" style={{ left: `${x1 / item.width * 100}%`, top: `${y1 / item.height * 100}%`, width: `${(x2 - x1) / item.width * 100}%`, height: `${(y2 - y1) / item.height * 100}%` }}><span>{item.class_name} {percent(item.confidence)}</span></div>}
     {item.is_mock && <span className="image-demo"><span />{item.is_demo ? 'SYNTHETIC DEMO' : 'MOCK DETECTION'}</span>}
   </div>;
@@ -52,20 +57,33 @@ function ReviewButtons({ item, onReview, busy, compact = false }) {
   </div>;
 }
 
-function DetectionCard({ item, boxes, onOpen, onReview, busy }) {
-  return <article className="detection-card panel">
-    <button className="image-button" onClick={() => onOpen(item.id)} aria-label={`Inspect detection ${shortId(item.id)}`}><DetectionImage item={item} boxes={boxes} /><span className="inspect-hint"><Focus size={15} /> Inspect frame</span></button>
+function DetectionCard({ item, boxes, onOpen, onReview, busy, checked, onToggle, selecting }) {
+  return <article className={`detection-card panel ${checked ? 'is-selected' : ''}`}>
+    <div className="card-selection"><FileSelection item={item} checked={checked} onToggle={onToggle} disabled={busy || selecting} /></div>
+    <button className="image-button" style={{ '--thumbnail-ratio': THUMBNAIL_RATIO, '--thumbnail-width': `${Math.min(100, item.width / item.height / THUMBNAIL_RATIO * 100)}%` }} onClick={() => onOpen(item.id)} aria-label={`Inspect detection ${shortId(item.id)}`}><DetectionImage item={item} boxes={boxes} /><span className="inspect-hint"><Focus size={15} /> Inspect frame</span></button>
     <div className="card-content"><div className="row-between"><span className="eyebrow mono">{item.status === 'verified' ? item.sighting_id : `DET-${shortId(item.id)}`}</span><Badge tone={item.status === 'verified' ? 'green' : item.status === 'rejected' ? 'red' : 'amber'}>{item.status === 'pending' ? 'Pending review' : item.status === 'verified' ? 'Verified' : 'Rejected'}</Badge></div>
       <button className="card-title" onClick={() => onOpen(item.id)}>{item.class_name === 'turtle' ? 'Turtle candidate' : item.class_name}<ArrowUpRight size={16} /></button>
+      <button className="card-filename" onClick={() => onOpen(item.id)} title={item.filename}><FileImage size={14} /><span>{item.filename}</span></button>
+      {item.is_mock && <div className="card-provenance"><Badge tone="amber">{item.is_demo ? 'Synthetic demo' : 'Mock detection'}</Badge></div>}
       <div className="confidence-line"><span>Model confidence</span><strong>{percent(item.confidence)}</strong></div><div className="confidence-track"><i style={{ width: percent(item.confidence) }} /></div>
-      <div className="card-metadata"><span><MapPin size={13} />{coordinates(item)}</span><span><CalendarDays size={13} />{stamp(item.captured_at)}</span></div>
+      <div className="card-metadata"><span><MapPin size={13} />{coordinates(item)}</span><span><CalendarDays size={13} />{captureStamp(item)}</span></div>
       {item.status === 'verified' && <span className="verification-time"><CheckCheck size={12} /> Verified {stamp(item.reviewed_at)}</span>}
       <ReviewButtons item={item} onReview={onReview} busy={busy} compact />
     </div>
   </article>;
 }
 
-function DetailModal({ item, onClose, onReview, busy }) {
+function DetectionRow({ item, boxes, onOpen, onReview, busy, checked, onToggle, selecting }) {
+  return <article className={`detection-card detection-row panel ${checked ? 'is-selected' : ''}`}>
+    <FileSelection item={item} checked={checked} onToggle={onToggle} disabled={busy || selecting} compact />
+    <button className="image-button row-preview" style={{ '--image-ratio': item.width / item.height }} onClick={() => onOpen(item.id)} aria-label={`Inspect detection ${shortId(item.id)}`}><DetectionImage item={item} boxes={boxes} /></button>
+    <div className="row-file"><button className="row-filename" onClick={() => onOpen(item.id)}>{item.filename}</button><span className="eyebrow mono">{item.status === 'verified' ? item.sighting_id : `DET-${shortId(item.id)}`}</span><div className="row-file-badges"><Badge tone={item.status === 'verified' ? 'green' : item.status === 'rejected' ? 'red' : 'amber'}>{item.status === 'pending' ? 'Pending review' : item.status === 'verified' ? 'Verified' : 'Rejected'}</Badge><span>{percent(item.confidence)} confidence</span>{item.is_mock && <Badge tone="amber">{item.is_demo ? 'Synthetic demo' : 'Mock detection'}</Badge>}</div></div>
+    <div className="row-metadata"><span><MapPin size={14} />{coordinates(item)}</span><span><CalendarDays size={14} />{captureStamp(item)}</span>{item.status === 'verified' && <span><CheckCheck size={14} />Verified {stamp(item.reviewed_at)}</span>}</div>
+    <ReviewButtons item={item} onReview={onReview} busy={busy} compact />
+  </article>;
+}
+
+function DetailModal({ item, onClose, onReview, busy, index, total, onNavigate }) {
   const [view, setView] = useState('frame');
   const [boxes, setBoxes] = useState(true);
   const dialog = useRef(null);
@@ -74,15 +92,23 @@ function DetailModal({ item, onClose, onReview, busy }) {
     const bodyOverflow = document.body.style.overflow; document.body.style.overflow = 'hidden';
     return () => { document.body.style.overflow = bodyOverflow; };
   }, []);
-  return <dialog ref={dialog} className="detail-modal" aria-labelledby={`detection-title-${item.id}`} onCancel={onClose} onClick={event => { if (event.target === dialog.current) onClose(); }}>
-    <div className="modal-header"><div><div className="eyebrow">DETECTION INSPECTOR</div><h2 id={`detection-title-${item.id}`}>{item.status === 'verified' ? item.sighting_id : `DET-${shortId(item.id)}`}</h2></div><button className="icon-button" onClick={onClose} aria-label="Close detection details"><X size={21} /></button></div>
+  useEffect(() => { dialog.current.scrollTop = 0; }, [item.id]);
+  function handleKeys(event) {
+    if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || event.target.closest('input, textarea, select, [contenteditable], [role="slider"]')) return;
+    const direction = event.key === 'ArrowLeft' ? -1 : event.key === 'ArrowRight' ? 1 : 0;
+    if (!direction) return;
+    event.preventDefault();
+    if (!busy && index + direction >= 0 && index + direction < total) onNavigate(direction);
+  }
+  return <dialog ref={dialog} className="detail-modal" aria-labelledby={`detection-title-${item.id}`} onKeyDown={handleKeys} onCancel={onClose} onClick={event => { if (event.target === dialog.current) onClose(); }}>
+    <div className="modal-header"><div><div className="eyebrow">DETECTION INSPECTOR</div><h2 id={`detection-title-${item.id}`}>{item.status === 'verified' ? item.sighting_id : `DET-${shortId(item.id)}`}</h2></div><button className="icon-button" onClick={onClose} aria-label="Close detection details"><X size={21} /></button><div className="inspector-navigation" role="group" aria-label="Image navigation"><button className="inspector-arrow previous" onClick={() => onNavigate(-1)} disabled={busy || index <= 0} aria-label="Previous image" title="Previous image (Left arrow)"><ChevronLeft size={22} /><span>Previous</span></button><span className="inspector-count" aria-live="polite" aria-atomic="true">Image {index + 1} of {total}<span className="sr-only">: {item.filename}</span></span><button className="inspector-arrow next" onClick={() => onNavigate(1)} disabled={busy || index >= total - 1} aria-label="Next image" title="Next image (Right arrow)"><span>Next</span><ChevronRight size={22} /></button></div></div>
     <div className="modal-grid"><div className="modal-visual"><div className="image-tools"><div className="segmented"><button className={view === 'frame' ? 'active' : ''} onClick={() => setView('frame')}>Full frame</button><button className={view === 'crop' ? 'active' : ''} onClick={() => setView('crop')}>Object crop</button><button className={view === 'annotated' ? 'active' : ''} onClick={() => setView('annotated')}>Annotated</button></div>{view === 'frame' && <label className="checkbox-label"><input type="checkbox" checked={boxes} onChange={e => setBoxes(e.target.checked)} /> Bounding box</label>}</div>
-      {view === 'annotated' ? <img className="annotated-preview" src={item.annotated_url} alt="Saved frame with model annotation" /> : <DetectionImage item={item} boxes={boxes} crop={view === 'crop'} large />}
+      <div className="inspector-stage">{view === 'annotated' ? <img className="annotated-preview" src={item.annotated_url} alt="Saved frame with model annotation" draggable={false} /> : <DetectionImage item={item} boxes={boxes} crop={view === 'crop'} large />}</div>
       <div className="image-caption"><FileImage size={14} /><span>{item.filename}</span><span>{item.width} × {item.height} px</span></div>
     </div><div className="modal-info"><Badge tone={item.status === 'verified' ? 'green' : item.status === 'rejected' ? 'red' : 'amber'}>{item.status === 'pending' ? 'Pending review' : item.status === 'verified' ? 'Verified sighting' : 'Rejected detection'}</Badge>
       <h3>{item.class_name === 'turtle' ? 'Potential turtle' : item.class_name}</h3><div className="big-confidence">{percent(item.confidence)}<span>model confidence</span></div>
       {item.is_mock && <div className="notice amber"><CircleHelp size={16} /><span>{item.is_demo ? 'Synthetic image and location for demonstration. This is not a field observation.' : 'Simulated bounding box. No AI inference was run on this image.'}</span></div>}
-      <dl className="detail-list"><div><dt>GPS coordinates</dt><dd className="mono">{coordinates(item)}</dd></div><div><dt>Original capture time</dt><dd>{stamp(item.captured_at)}</dd></div><div><dt>Uploaded</dt><dd>{stamp(item.uploaded_at)}</dd></div>{item.reviewed_at && <div><dt>{item.status === 'verified' ? 'Verified' : 'Reviewed'}</dt><dd>{stamp(item.reviewed_at)}</dd></div>}<div><dt>Detection model</dt><dd>{item.model_name}</dd></div><div><dt>Image source</dt><dd>{item.source}</dd></div><div><dt>Metadata source</dt><dd>{Object.entries(item.metadata.provenance || {}).filter(([k]) => k !== 'video_frame').map(([k, v]) => `${k === 'gps' ? 'GPS' : 'Time'}: ${v}`).join(' · ') || 'No embedded metadata'}</dd></div></dl>
+      <dl className="detail-list"><div><dt>GPS coordinates</dt><dd className="mono">{coordinates(item)}</dd></div><div><dt>{isLiveFrameTime(item) ? 'Live frame captured' : 'Original capture time'}</dt><dd>{captureStamp(item)}</dd></div><div><dt>Uploaded</dt><dd>{stamp(item.uploaded_at)}</dd></div>{item.reviewed_at && <div><dt>{item.status === 'verified' ? 'Verified' : 'Reviewed'}</dt><dd>{stamp(item.reviewed_at)}</dd></div>}<div><dt>Detection model</dt><dd>{item.model_name}</dd></div><div><dt>Image source</dt><dd>{item.source}</dd></div><div><dt>Metadata source</dt><dd>{Object.entries(item.metadata.provenance || {}).filter(([k]) => k !== 'video_frame').map(([k, v]) => `${k === 'gps' ? 'GPS' : 'Time'}: ${v}`).join(' · ') || 'No embedded metadata'}</dd></div></dl>
       {item.metadata.missing?.length > 0 && <div className="notice"><MapPin size={15} /><span>Missing {item.metadata.missing.map(x => x === 'gps' ? 'GPS coordinates' : 'capture timestamp').join(' and ')}. No replacement values have been generated.</span></div>}
       {item.metadata.warnings?.filter(x => !x.startsWith('Synthetic')).map(warning => <p className="metadata-warning" key={warning}>{warning}</p>)}
       <ReviewButtons item={item} onReview={onReview} busy={busy} />
@@ -107,19 +133,19 @@ function Overview({ records, stats, navigate, onOpen, onReview, busy }) {
     <div className="overview-columns"><section className="panel review-panel"><div className="section-top"><div><h2>Up next <span className="count-pill">{pending.length}</span></h2><p className="section-description">Continue your review queue</p></div><button className="text-button" onClick={() => navigate('pending')}>View all <ArrowUpRight size={15} /></button></div>
       {pending.length ? <div className="featured-review"><div><button className="image-button featured-image" aria-label="Inspect detection" onClick={() => onOpen(pending[0].id)}><DetectionImage item={pending[0]} /><span className="inspect-hint"><Focus size={16} /> Inspect detection</span></button><div className="featured-caption"><span className="mono">DET-{shortId(pending[0].id)}</span><Badge tone="amber">Pending review</Badge></div></div><div className="featured-info"><div className="eyebrow accent">READY TO REVIEW</div><h3>Turtle candidate</h3><p>Inspect the frame and confirm or reject this candidate.</p><div className="feature-confidence"><strong>{percent(pending[0].confidence)}</strong><span>model confidence</span></div><span className="muted-meta"><MapPin size={14} />{coordinates(pending[0])}</span><ReviewButtons item={pending[0]} onReview={onReview} busy={busy.has(pending[0].id)} /></div></div> : <Empty title="All caught up" icon={CircleCheck}>New detections will appear here when you upload more media.</Empty>}
       {pending.length > 1 && <div className="queue-strip">{pending.slice(1, 4).map(item => <button onClick={() => onOpen(item.id)} key={item.id}><img src={item.cropped_url} alt="Turtle candidate crop" /><span><strong>DET-{shortId(item.id)}</strong><small>{percent(item.confidence)} confidence</small></span><ChevronRight size={15} /></button>)}</div>}
-    </section><section className="panel location-panel"><div className="section-top"><div><h2>Verified locations</h2><p className="section-description">Your sightings on the map</p></div><button className="icon-button" onClick={() => navigate('map')} title="Open turtle map" aria-label="Open turtle map"><ArrowUpRight size={18} /></button></div><MapView records={records} onOpen={onOpen} compact /><div className="location-footer"><span><span className="marker-dot" /> Human-verified sightings</span><small>Demo locations are synthetic</small></div><div className="latest-sighting"><span className="eyebrow">LATEST CAPTURED SIGHTING</span><strong>{stats.latest_sighting ? stamp(stats.latest_sighting.captured_at) : 'No capture timestamp available'}</strong></div></section></div>
-    <div className="overview-bottom"><section className="panel activity-panel"><div className="section-top"><div><h2>Recent reviews</h2><p className="section-description">The latest from your workspace</p></div><Activity size={18} className="muted" /></div>{reviewed.length ? reviewed.map(item => <button className="activity-row" onClick={() => onOpen(item.id)} key={item.id}><span className={`activity-icon ${item.status === 'verified' ? 'green' : 'red'}`}>{item.status === 'verified' ? <Check size={16} /> : <X size={16} />}</span><span><strong>{item.status === 'verified' ? 'Turtle sighting verified' : 'Detection rejected'}</strong><small>DET-{shortId(item.id)} · {item.is_demo ? 'Synthetic demo' : item.is_mock ? 'Mock detection' : item.model_name}</small></span><time>{stamp(item.reviewed_at)}</time><ChevronRight size={14} /></button>) : <p className="panel-text">Your review activity will appear here.</p>}</section><div className="panel source-panel"><div className="source-icon"><Plane size={27} /></div><div className="eyebrow">YOUR SOURCE</div><h2>DJI Avata 2</h2><p>Import recorded footage, or configure a MediaMTX live preview.</p><div className="source-mode"><span className="status-dot" />Recorded media workflow</div><div className="source-summary"><span>Rejected & retained <strong>{stats.rejected}</strong></span><span>Simulated detections <strong>{stats.mock_detections}</strong></span></div><div className="source-actions"><button className="text-button" onClick={() => navigate('upload')}>Upload media <ArrowRight size={15} /></button><button className="text-button" onClick={() => navigate('live')}>Set up live feed <ArrowUpRight size={15} /></button></div></div></div>
+    </section><section className="panel location-panel"><div className="section-top"><div><h2>Verified locations</h2><p className="section-description">Your sightings on the map</p></div><button className="icon-button" onClick={() => navigate('map')} title="Open turtle map" aria-label="Open turtle map"><ArrowUpRight size={18} /></button></div><MapView records={records} onOpen={onOpen} compact /><div className="location-footer"><span><span className="marker-dot" /> Human-verified sightings</span><small>Demo locations are synthetic</small></div><div className="latest-sighting"><span className="eyebrow">LATEST CAPTURED SIGHTING</span><strong>{stats.latest_sighting ? captureStamp(stats.latest_sighting) : 'No capture timestamp available'}</strong></div></section></div>
+    <div className="overview-bottom"><section className="panel activity-panel"><div className="section-top"><div><h2>Recent reviews</h2><p className="section-description">The latest from your workspace</p></div><Activity size={18} className="muted" /></div>{reviewed.length ? reviewed.map(item => <button className="activity-row" onClick={() => onOpen(item.id)} key={item.id}><span className={`activity-icon ${item.status === 'verified' ? 'green' : 'red'}`}>{item.status === 'verified' ? <Check size={16} /> : <X size={16} />}</span><span><strong>{item.status === 'verified' ? 'Turtle sighting verified' : 'Detection rejected'}</strong><small>DET-{shortId(item.id)} · {item.is_demo ? 'Synthetic demo' : item.is_mock ? 'Mock detection' : item.model_name}</small></span><time>{stamp(item.reviewed_at)}</time><ChevronRight size={14} /></button>) : <p className="panel-text">Your review activity will appear here.</p>}</section><div className="panel source-panel"><div className="source-icon"><Plane size={27} /></div><div className="eyebrow">YOUR SOURCE</div><h2>DJI Avata 2</h2><p>Import recorded footage, or share your scrcpy window for live detection.</p><div className="source-mode"><span className="status-dot" />Recorded media workflow</div><div className="source-summary"><span>Rejected & retained <strong>{stats.rejected}</strong></span><span>Simulated detections <strong>{stats.mock_detections}</strong></span></div><div className="source-actions"><button className="text-button" onClick={() => navigate('upload')}>Upload media <ArrowRight size={15} /></button><button className="text-button" onClick={() => navigate('live')}>Set up live feed <ArrowUpRight size={15} /></button></div></div></div>
   </>;
 }
 
 function exportCSV(records) {
-  const columns = ['id', 'sighting_id', 'status', 'confidence', 'latitude', 'longitude', 'captured_at', 'reviewed_at', 'filename', 'model_name', 'source', 'is_mock', 'is_demo'];
+  const columns = ['id', 'sighting_id', 'status', 'confidence', 'latitude', 'longitude', 'captured_at', 'capture_time_source', 'reviewed_at', 'filename', 'model_name', 'source', 'is_mock', 'is_demo'];
   const cell = value => { let text = value == null ? '' : String(value); if (typeof value === 'string' && /^[=+@\-\t\r]/.test(text)) text = `'${text}`; return `"${text.replaceAll('"', '""')}"`; };
-  const blob = new Blob(['\uFEFF' + [columns.join(','), ...records.map(row => columns.map(key => cell(row[key])).join(','))].join('\r\n')], { type: 'text/csv;charset=utf-8' });
+  const blob = new Blob(['\uFEFF' + [columns.join(','), ...records.map(row => columns.map(key => cell(key === 'capture_time_source' ? row.metadata?.provenance?.captured_at : row[key])).join(','))].join('\r\n')], { type: 'text/csv;charset=utf-8' });
   const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = 'asian-baddies-sightings.csv'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-function Collection({ kind, records, onOpen, onReview, busy, navigate }) {
+function Collection({ kind, records, onOpen, onReview, onBulkReview, onDeletePhotos, busy, navigate }) {
   const verified = kind === 'sightings';
   const [status, setStatus] = useState('pending');
   const [search, setSearch] = useState('');
@@ -130,6 +156,14 @@ function Collection({ kind, records, onOpen, onReview, busy, navigate }) {
   const [sort, setSort] = useState('newest');
   const [boxes, setBoxes] = useState(true);
   const [filters, setFilters] = useState(false);
+  const [checkedIds, setCheckedIds] = useState(new Set());
+  const [working, setWorking] = useState(false);
+  const [deleting, setDeleting] = useState(null);
+  const [fileView, setFileView] = useState(() => {
+    try { const saved = localStorage.getItem('turtle-file-view'); return ['small', 'medium', 'large', 'list'].includes(saved) ? saved : 'medium'; }
+    catch { return 'medium'; }
+  });
+  useEffect(() => { try { localStorage.setItem('turtle-file-view', fileView); } catch {} }, [fileView]);
   const filtered = useMemo(() => records.filter(item => {
     const query = search.toLowerCase().trim(); const day = item.captured_at?.slice(0, 10);
     return item.status === (verified ? 'verified' : status) && item.confidence >= Number(minConfidence) &&
@@ -137,13 +171,34 @@ function Collection({ kind, records, onOpen, onReview, busy, navigate }) {
       (location === 'all' || (location === 'located' ? item.latitude != null : item.latitude == null)) &&
       (!from || day && day >= from) && (!to || day && day <= to);
   }).sort((a, b) => sort === 'confidence' ? b.confidence - a.confidence : sort === 'reviewed' ? (b.reviewed_at || '').localeCompare(a.reviewed_at || '') : captureOrder(a, b, sort === 'oldest')), [records, verified, status, search, minConfidence, location, from, to, sort]);
+  const visibleIds = useMemo(() => new Set(filtered.map(item => item.id)), [filtered]);
+  useEffect(() => { setCheckedIds(current => { const next = new Set([...current].filter(id => visibleIds.has(id))); return next.size === current.size ? current : next; }); }, [visibleIds]);
+  const selectedItems = filtered.filter(item => checkedIds.has(item.id));
+  const selectedPhotoIds = new Set(selectedItems.map(item => item.image_id));
+  const activeSibling = records.some(item => selectedPhotoIds.has(item.image_id) && item.status !== 'rejected');
+  const deleteBlocked = !verified && status === 'rejected' && activeSibling ? 'Some selected photos still have pending or verified detections. Restore or review those detections before deleting the photo.' : selectedPhotoIds.size > 1000 ? 'Select up to 1,000 photos at a time for deletion.' : '';
+  const selectionBusy = working || selectedItems.some(item => busy.has(item.id));
+  function toggleItem(id) { setCheckedIds(current => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next; }); }
+  async function reviewSelected(action) {
+    setWorking(true);
+    try { const result = await onBulkReview(selectedItems.map(item => item.id), action); setCheckedIds(new Set(result.failedIds)); }
+    finally { setWorking(false); }
+  }
+  function prepareDeletion() {
+    const related = records.filter(item => selectedPhotoIds.has(item.image_id));
+    setDeleting({ photos: [...new Map(related.map(item => [item.image_id, item])).values()], detectionCount: related.length });
+  }
   function clear() { setSearch(''); setMinConfidence(0); setLocation('all'); setFrom(''); setTo(''); }
+  const openItem = id => onOpen(id, filtered);
+  const ItemView = fileView === 'list' ? DetectionRow : DetectionCard;
   return <><div className="page-heading"><div><div className="eyebrow accent">{verified ? 'THE VERIFIED RECORD' : 'HUMAN INSIGHT, MODEL ASSISTED'}</div><h1>{verified ? 'Verified sightings' : 'Pending detections'}<span className="heading-dot">.</span></h1><p>{verified ? 'Every sighting here has been confirmed by a human. A growing record of life on the ground.' : 'A candidate is just the beginning. Your review turns a possibility into a trusted observation.'}</p></div><button className="button secondary" onClick={() => verified ? exportCSV(filtered) : navigate('upload')}>{verified ? <ArrowDownToLine size={16} /> : <Plus size={16} />}{verified ? 'Export sightings' : 'Upload media'}</button></div>
     {!verified && <div className="tabs"><button className={status === 'pending' ? 'active' : ''} onClick={() => setStatus('pending')}>Awaiting review <span>{records.filter(x => x.status === 'pending').length}</span></button><button className={status === 'rejected' ? 'active' : ''} onClick={() => setStatus('rejected')}>Rejected archive <span>{records.filter(x => x.status === 'rejected').length}</span></button></div>}
     <div className="collection-toolbar"><label className="search-field"><Search size={17} /><input placeholder="Search ID, filename, or coordinates…" value={search} onChange={e => setSearch(e.target.value)} aria-label="Search detections" /></label><div className="toolbar-actions"><label className="checkbox-label"><input type="checkbox" checked={boxes} onChange={e => setBoxes(e.target.checked)} /> Show boxes</label><button className={`button secondary ${filters ? 'selected' : ''}`} onClick={() => setFilters(!filters)} aria-expanded={filters}><SlidersHorizontal size={15} />Filters{(Number(minConfidence) > 0 || location !== 'all' || from || to) && <span className="status-dot" />}</button><select value={sort} onChange={e => setSort(e.target.value)} aria-label="Sort detections"><option value="newest">Newest capture</option><option value="oldest">Oldest capture</option><option value="confidence">Highest confidence</option>{verified && <option value="reviewed">Recently verified</option>}</select></div></div>
     {filters && <div className="filter-panel panel"><label>Minimum confidence<select value={minConfidence} onChange={e => setMinConfidence(e.target.value)}><option value="0">Any confidence</option><option value="0.7">70% or higher</option><option value="0.85">85% or higher</option><option value="0.95">95% or higher</option></select></label><label>Location<select value={location} onChange={e => setLocation(e.target.value)}><option value="all">All locations</option><option value="located">With GPS coordinates</option><option value="missing">Missing GPS coordinates</option></select></label><label>Captured from<input type="date" value={from} onChange={e => setFrom(e.target.value)} /></label><label>Captured through<input type="date" value={to} onChange={e => setTo(e.target.value)} min={from} /></label><button className="text-button" onClick={clear}>Clear filters</button></div>}
-    <div className="results-line"><span>{filtered.length} {verified ? 'verified sightings' : status === 'rejected' ? 'retained detections' : 'candidates to review'}</span><span><span className="status-dot" /> Changes saved locally</span></div>
-    {filtered.length ? <div className="detections-grid">{filtered.map(item => <DetectionCard item={item} boxes={boxes} onOpen={onOpen} onReview={onReview} busy={busy.has(item.id)} key={item.id} />)}</div> : <div className="panel"><Empty icon={verified ? ShieldCheck : CircleCheck} title={search || from || to || Number(minConfidence) || location !== 'all' ? 'No matching detections' : verified ? 'Your sighting record starts here' : status === 'rejected' ? 'No rejected detections' : 'The review queue is clear'} action={<button className="button secondary" onClick={() => search || from || to || Number(minConfidence) || location !== 'all' ? clear() : navigate(verified ? 'pending' : 'upload')}>{search || from || to || Number(minConfidence) || location !== 'all' ? 'Clear filters' : verified ? 'Review candidates' : 'Upload media'}</button>}>{verified ? 'Confirm a turtle candidate to add it to this record.' : 'New candidates appear after image or video processing.'}</Empty></div>}
+    <div className="results-line file-results"><span>{filtered.length} {verified ? 'verified sightings' : status === 'rejected' ? 'retained detections' : 'candidates to review'}</span><label className="file-view-control">{fileView === 'list' ? <List size={17} /> : <LayoutGrid size={17} />}<span>View</span><select aria-label="File view" value={fileView} onChange={event => setFileView(event.target.value)}><option value="small">Small thumbnails</option><option value="medium">Medium thumbnails</option><option value="large">Large thumbnails</option><option value="list">List</option></select></label></div>
+    {filtered.length > 0 && <SelectionToolbar count={selectedItems.length} photoCount={selectedPhotoIds.size} total={filtered.length} allSelected={selectedItems.length === filtered.length} partiallySelected={selectedItems.length > 0 && selectedItems.length < filtered.length} onSelectAll={() => setCheckedIds(selectedItems.length === filtered.length ? new Set() : new Set(filtered.filter(item => !busy.has(item.id)).map(item => item.id)))} onClear={() => setCheckedIds(new Set())} status={verified ? 'verified' : status} onReview={reviewSelected} onDelete={prepareDeletion} working={selectionBusy} deleteBlocked={deleteBlocked} />}
+    {filtered.length ? <div className={`detections-grid view-${fileView}`}>{filtered.map(item => <ItemView item={item} boxes={boxes} onOpen={openItem} onReview={onReview} busy={busy.has(item.id)} checked={checkedIds.has(item.id)} onToggle={toggleItem} selecting={working} key={item.id} />)}</div> : <div className="panel"><Empty icon={verified ? ShieldCheck : CircleCheck} title={search || from || to || Number(minConfidence) || location !== 'all' ? 'No matching detections' : verified ? 'Your sighting record starts here' : status === 'rejected' ? 'No rejected detections' : 'The review queue is clear'} action={<button className="button secondary" onClick={() => search || from || to || Number(minConfidence) || location !== 'all' ? clear() : navigate(verified ? 'pending' : 'upload')}>{search || from || to || Number(minConfidence) || location !== 'all' ? 'Clear filters' : verified ? 'Review candidates' : 'Upload media'}</button>}>{verified ? 'Confirm a turtle candidate to add it to this record.' : 'New candidates appear after image or video processing.'}</Empty></div>}
+    {deleting && <DeletePhotoDialog {...deleting} onDelete={onDeletePhotos} onClose={() => setDeleting(null)} />}
   </>;
 }
 
@@ -181,7 +236,7 @@ function UploadPage({ settings, jobs, refresh, navigate, toast }) {
       <input ref={picker} className="sr-only" type="file" accept={video ? '.mp4,.mov,.avi,.mkv' : 'image/jpeg,image/png,image/webp,image/tiff,image/bmp'} multiple={!video} onChange={e => { selectFiles(e.target.files); e.target.value = ''; }} aria-label={video ? 'Choose video' : 'Choose photos'} disabled={working} />
       <button type="button" className={`dropzone ${dragging ? 'dragging' : ''}`} onClick={() => picker.current.click()} onDragOver={e => { e.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={e => { e.preventDefault(); setDragging(false); if (!working) selectFiles(e.dataTransfer.files); }} disabled={working}><span className="upload-icon">{video ? <Film size={30} /> : <ImagePlus size={30} />}</span><strong>Drop your {video ? 'recording' : 'photographs'} here</strong><span>or <u>browse files</u> on your computer</span><small>{video ? 'MP4, MOV, AVI, MKV · up to 1 GB by default' : 'JPG, PNG, WebP, TIFF, BMP · 50 MB / 40 MP per image'}</small></button>
       {files.length > 0 && <div className="selected-files">{files.map((file, index) => <div key={`${file.name}-${index}`}><FileImage size={17} /><span><strong>{file.name}</strong><small>{(file.size / 1024 / 1024).toFixed(1)} MB</small></span><button type="button" className="icon-button" onClick={() => setFiles(files.filter((_, i) => i !== index))} disabled={working} aria-label={`Remove ${file.name}`}><X size={16} /></button></div>)}</div>}
-      {video && <div className="video-options"><h3>Frame selection</h3><p>Sample the recording at a fixed interval. Every candidate can be reviewed independently.</p><div className="form-grid"><label>Extract one frame every (seconds)<input type="number" step="0.25" min="0.25" max="3600" required value={interval} onChange={e => setIntervalValue(e.target.value)} /></label><label>Maximum selected frames<input type="number" min="1" max="1000" required value={maxFrames} onChange={e => setMaxFrames(e.target.value)} /></label></div><label className="file-field">External telemetry <span className="optional">OPTIONAL · CSV / SRT</span><input type="file" accept=".csv,.srt" onChange={e => setTelemetry(e.target.files[0] || null)} /></label><p className="help-text">CSV: offset_seconds, latitude, longitude, captured_at. SRT reads recognized DJI fields; formats can vary. Closest telemetry sample must be within 2 seconds by default.</p></div>}
+      {video && <div className="video-options"><h3>Frame selection</h3><p>Sample the recording at a fixed interval. Every candidate can be reviewed independently.</p><div className="form-grid"><SamplingFields prefix="upload-video" intervalLabel="Extract one frame every (seconds)" interval={interval} maxFrames={maxFrames} onInterval={setIntervalValue} onMaxFrames={setMaxFrames} /></div><label className="file-field">External telemetry <span className="optional">OPTIONAL · CSV / SRT</span><input type="file" accept=".csv,.srt" onChange={e => setTelemetry(e.target.files[0] || null)} /></label><p className="help-text">CSV: offset_seconds, latitude, longitude, captured_at. SRT reads recognized DJI fields; formats can vary. Closest telemetry sample must be within 2 seconds by default.</p></div>}
       <div className="metadata-form"><div className="eyebrow">02 / CAPTURE METADATA <span className="optional">OPTIONAL</span></div><h3>Keep the original context</h3><p>Embedded metadata is read automatically. Supplied values override embedded data. For video, telemetry overrides matched frame metadata.</p><div className="form-grid"><label>Latitude<input type="number" min="-90" max="90" step="any" placeholder="e.g. 35.91920" value={latitude} onChange={e => setLatitude(e.target.value)} /></label><label>Longitude<input type="number" min="-180" max="180" step="any" placeholder="e.g. -78.96280" value={longitude} onChange={e => setLongitude(e.target.value)} /></label><label>{video ? 'Original recording start' : 'Original capture time'}<input type="datetime-local" step="1" value={captured} onChange={e => setCaptured(e.target.value)} /></label><label>Capture timezone offset<input type="text" aria-label="Capture timezone offset" placeholder="Unknown, or e.g. -04:00" value={zone} onChange={e => setZone(e.target.value)} /><small>Leave blank if the camera timezone is unknown.</small></label></div><div className="notice"><MapPin size={16} /><span>Missing GPS and capture time stay missing. Upload time is recorded separately.</span></div></div>
       <div className="upload-submit"><span>{files.length ? `${files.length} ${video ? 'recording' : 'photos'} selected` : 'Choose files to get started'}</span><button className="button primary" type="submit" disabled={working || !files.length}>{working ? <Spinner small /> : <ScanLine size={17} />}{working ? 'Saving media…' : video ? 'Extract & process frames' : 'Process photographs'}</button></div>
       {results.length > 0 && <div className="upload-results" aria-live="polite">{results.map((result, index) => <div className={result.ok ? 'success' : 'failure'} key={index}>{result.ok ? <CircleCheck size={18} /> : <XCircle size={18} />}<span><strong>{result.name}</strong>{result.message}</span></div>)}{results.some(x => x.ok) && <button type="button" className="text-button" onClick={() => navigate('pending')}>Open pending detections <ArrowRight size={15} /></button>}</div>}
@@ -196,7 +251,7 @@ function SettingsPage({ settings, setSettings, models, reloadModels, toast }) {
   useEffect(() => setDraft(settings), [settings]);
   async function save(event) { event.preventDefault(); setSaving(true); try { const result = await api.saveSettings({ ...draft, confidence_threshold: Number(draft.confidence_threshold), frame_interval_seconds: Number(draft.frame_interval_seconds), max_frames: Number(draft.max_frames) }); setSettings(result); toast('Detection settings saved. New uploads will use these values.'); } catch (error) { toast(error.message, 'error'); } finally { setSaving(false); } }
   async function register(event) { event.preventDefault(); setRegistering(true); try { await api.addModel({ name, path, labels: labels.split(',').map(x => x.trim()).filter(Boolean) }); await reloadModels(); toast('Model registered. Select it above to activate.'); setName(''); setPath(''); } catch (error) { toast(error.message, 'error'); } finally { setRegistering(false); } }
-  return <><div className="page-heading"><div><div className="eyebrow accent">YOUR SURVEY, YOUR SETUP</div><h1>Settings<span className="heading-dot">.</span></h1><p>Upgrade the model. Keep your workflow. Configure how new media becomes reviewable detections.</p></div><Badge tone="green"><span className="status-dot" />LOCAL WORKSPACE</Badge></div><div className="settings-layout"><div><form className="panel settings-panel" onSubmit={save}><div className="section-top"><div><span className="eyebrow">DETECTION ENGINE</span><h2>A model that can evolve</h2></div><Cpu size={23} /></div><p>Choose the adapter used for new uploads. Existing detections retain their original model, scores, and review status.</p><div className="model-options">{models.map(model => <label className={`model-option ${draft.active_model_id === model.id ? 'chosen' : ''}`} key={model.id}><input type="radio" name="active-model" checked={draft.active_model_id === model.id} value={model.id} onChange={() => setDraft({ ...draft, active_model_id: model.id })} disabled={!model.available} /><span className="model-icon">{model.kind === 'demo' ? <Sprout size={23} /> : <Cpu size={23} />}</span><span><strong>{model.name}</strong><small>{model.kind === 'demo' ? 'Simulated detections · no model file needed' : model.path}</small></span><Badge tone={!model.available ? 'red' : model.kind === 'demo' ? 'amber' : 'green'}>{!model.available ? 'File missing' : model.kind === 'demo' ? 'Demo' : 'YOLO .pt'}</Badge></label>)}</div><div className="threshold-control"><div className="row-between"><label htmlFor="confidence-threshold">Confidence threshold</label><strong>{percent(Number(draft.confidence_threshold))}</strong></div><input id="confidence-threshold" type="range" min="0.01" max="1" step="0.01" value={draft.confidence_threshold} onChange={e => setDraft({ ...draft, confidence_threshold: Number(e.target.value) })} /><div className="range-labels"><span>More candidates · 1%</span><span>Higher certainty · 100%</span></div><p className="help-text">Only candidates at or above this threshold enter the queue. Demo simulation emits a fixed 87% candidate.</p></div><div className="video-defaults"><h3>Recorded video defaults</h3><div className="form-grid"><label>Frame interval (seconds)<input type="number" min="0.25" max="3600" step="0.25" value={draft.frame_interval_seconds} onChange={e => setDraft({ ...draft, frame_interval_seconds: e.target.value })} required /></label><label>Maximum selected frames<input type="number" min="1" max="1000" value={draft.max_frames} onChange={e => setDraft({ ...draft, max_frames: e.target.value })} required /></label></div></div><div className="settings-save"><span><ShieldCheck size={14} />Stored in local SQLite</span><button className="button primary" disabled={saving}>{saving ? <Spinner small /> : <Check size={16} />}Save settings</button></div></form><form className="panel register-panel" onSubmit={register}><div className="section-top"><div><span className="eyebrow">MODEL LIBRARY</span><h2>Register a local model</h2></div><Plus size={22} /></div><p>Add an existing custom YOLO .pt file from the backend computer. The dashboard and database use the same detection format for every model.</p><label>Model name<input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Box turtle · woodland v2" required maxLength={100} /></label><label>Local model path<input value={path} onChange={e => setPath(e.target.value)} placeholder="C:\models\turtle-v2.pt or /home/user/models/turtle.pt" required /></label><label>Candidate class labels<input value={labels} onChange={e => setLabels(e.target.value)} placeholder="turtle, box turtle" /><small>Comma separated, case insensitive. Leave empty to accept every class.</small></label><div className="notice"><FolderOpen size={16} /><span>Local inference requires the optional packages in requirements-yolo.txt. Model files are never downloaded automatically.</span></div><button className="button secondary" disabled={registering}>{registering ? <Spinner small /> : <Plus size={16} />}Register model</button></form></div><aside><section className="panel source-config"><span className="source-icon"><Plane size={26} /></span><div className="eyebrow">DRONE SOURCE</div><h2>DJI Avata 2</h2><Badge>Recorded media + live preview</Badge><p>Review saved photos and videos, or open a MediaMTX video preview on the Live feed page.</p><a className="text-button" href="#live">Configure live feed <ArrowUpRight size={17} /></a><dl className="detail-list"><div><dt>Image ingestion</dt><dd>Upload or frame API</dd></div><div><dt>Video ingestion</dt><dd>Selected recorded frames</dd></div><div><dt>Telemetry</dt><dd>Embedded tags, CSV, SRT</dd></div><div><dt>Future adapters</dt><dd>Network frames, ROS 2, companion computers</dd></div></dl></section><div className="architecture-note"><Boxes size={22} /><h3>Independent by design</h3><p>The detection adapter and image source meet at a common frame contract. Changing either one keeps the review workflow intact.</p></div><div className="local-note"><ShieldCheck size={18} /><span>No paid integrations, cloud inference, or billing connections are configured.</span></div></aside></div></>;
+  return <><div className="page-heading"><div><div className="eyebrow accent">YOUR SURVEY, YOUR SETUP</div><h1>Settings<span className="heading-dot">.</span></h1><p>Upgrade the model. Keep your workflow. Configure how new media becomes reviewable detections.</p></div><Badge tone="green"><span className="status-dot" />LOCAL WORKSPACE</Badge></div><div className="settings-layout"><div><form className="panel settings-panel" onSubmit={save}><div className="section-top"><div><span className="eyebrow">DETECTION ENGINE</span><h2>A model that can evolve</h2></div><Cpu size={23} /></div><p>Choose the adapter used for new uploads. Existing detections retain their original model, scores, and review status.</p><div className="model-options">{models.map(model => <label className={`model-option ${draft.active_model_id === model.id ? 'chosen' : ''}`} key={model.id}><input type="radio" name="active-model" checked={draft.active_model_id === model.id} value={model.id} onChange={() => setDraft({ ...draft, active_model_id: model.id })} disabled={!model.available} /><span className="model-icon">{model.kind === 'demo' ? <Sprout size={23} /> : <Cpu size={23} />}</span><span><strong>{model.name}</strong><small>{model.kind === 'demo' ? 'Simulated detections · no model file needed' : model.path}</small></span><Badge tone={!model.available ? 'red' : model.kind === 'demo' ? 'amber' : 'green'}>{!model.available ? 'File missing' : model.kind === 'demo' ? 'Demo' : 'YOLO .pt'}</Badge></label>)}</div><div className="threshold-control"><div className="row-between"><label htmlFor="confidence-threshold">Confidence threshold</label><strong>{percent(Number(draft.confidence_threshold))}</strong></div><input id="confidence-threshold" type="range" min="0.01" max="1" step="0.01" value={draft.confidence_threshold} onChange={e => setDraft({ ...draft, confidence_threshold: Number(e.target.value) })} /><div className="range-labels"><span>More candidates · 1%</span><span>Higher certainty · 100%</span></div><p className="help-text">Only candidates at or above this threshold enter the queue. Demo simulation emits a fixed 87% candidate.</p></div><div className="video-defaults"><h3>Recorded video defaults</h3><div className="form-grid"><SamplingFields prefix="video-defaults" interval={draft.frame_interval_seconds} maxFrames={draft.max_frames} onInterval={value => setDraft({ ...draft, frame_interval_seconds: value })} onMaxFrames={value => setDraft({ ...draft, max_frames: value })} /></div></div><div className="settings-save"><span><ShieldCheck size={14} />Stored in local SQLite</span><button className="button primary" disabled={saving}>{saving ? <Spinner small /> : <Check size={16} />}Save settings</button></div></form><form className="panel register-panel" onSubmit={register}><div className="section-top"><div><span className="eyebrow">MODEL LIBRARY</span><h2>Register a local model</h2></div><Plus size={22} /></div><p>Add an existing custom YOLO .pt file from the backend computer. The dashboard and database use the same detection format for every model.</p><label>Model name<input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Box turtle · woodland v2" required maxLength={100} /></label><label>Local model path<input value={path} onChange={e => setPath(e.target.value)} placeholder="C:\models\turtle-v2.pt or /home/user/models/turtle.pt" required /></label><label>Candidate class labels<input value={labels} onChange={e => setLabels(e.target.value)} placeholder="turtle, box turtle" /><small>Comma separated, case insensitive. Leave empty to accept every class.</small></label><div className="notice"><FolderOpen size={16} /><span>Local inference requires the optional packages in requirements-yolo.txt. Model files are never downloaded automatically.</span></div><button className="button secondary" disabled={registering}>{registering ? <Spinner small /> : <Plus size={16} />}Register model</button></form></div><aside><section className="panel source-config"><span className="source-icon"><Plane size={26} /></span><div className="eyebrow">DRONE SOURCE</div><h2>DJI Avata 2</h2><Badge>Recorded media + scrcpy input</Badge><p>Review saved photos and videos, or share your scrcpy window and run live frame sampling.</p><a className="text-button" href="#live">Configure live feed <ArrowUpRight size={17} /></a><dl className="detail-list"><div><dt>Image ingestion</dt><dd>Upload or frame API</dd></div><div><dt>Video ingestion</dt><dd>Selected recorded frames</dd></div><div><dt>Telemetry</dt><dd>Embedded tags, CSV, SRT</dd></div><div><dt>Future adapters</dt><dd>Network frames, ROS 2, companion computers</dd></div></dl></section><div className="architecture-note"><Boxes size={22} /><h3>Independent by design</h3><p>The detection adapter and image source meet at a common frame contract. Changing either one keeps the review workflow intact.</p></div><div className="local-note"><ShieldCheck size={18} /><span>No paid integrations, cloud inference, or billing connections are configured.</span></div></aside></div></>;
 }
 
 export default function App() {
@@ -219,7 +274,13 @@ export default function App() {
   const [records, setRecords] = useState([]); const [stats, setStats] = useState(null); const [settings, setSettings] = useState(null);
   const [models, setModels] = useState([]); const [jobs, setJobs] = useState([]); const [loading, setLoading] = useState(true); const [error, setError] = useState('');
   const [selectedId, setSelectedId] = useState(null); const [busy, setBusy] = useState(new Set()); const [notification, setNotification] = useState(null); const [mobileNav, setMobileNav] = useState(false);
-  const revision = useRef(0); const fetching = useRef(null); const hydrated = useRef(false);
+  const [inspectionIds, setInspectionIds] = useState([]);
+  const openDetection = useCallback((id, collection) => {
+    const status = records.find(item => item.id === id)?.status;
+    setInspectionIds((collection || records.filter(item => item.status === status)).map(item => item.id));
+    setSelectedId(id);
+  }, [records]);
+  const revision = useRef(0); const fetching = useRef(null); const hydrated = useRef(false); const activeMutations = useRef(new Set());
   const toast = useCallback((message, tone = 'success') => setNotification({ message, tone, id: Date.now() }), []);
   useEffect(() => { if (notification) { const timer = setTimeout(() => setNotification(null), 6500); return () => clearTimeout(timer); } }, [notification]);
   const refresh = useCallback((silent = false, force = false) => {
@@ -247,20 +308,73 @@ export default function App() {
   useEffect(() => { const handler = () => { const hash = location.hash.slice(1); if (NAV.some(x => x[0] === hash)) { setPage(hash); setMobileNav(false); } }; window.addEventListener('hashchange', handler); return () => window.removeEventListener('hashchange', handler); }, []);
   const navigate = useCallback(next => { location.hash = next; setPage(next); setMobileNav(false); window.scrollTo({ top: 0 }); }, []);
   async function onReview(id, action) {
-    if (busy.has(id)) return;
+    if (activeMutations.current.has(id)) return;
+    activeMutations.current.add(id);
     setBusy(current => new Set(current).add(id)); revision.current++;
     try {
       const result = await api.review(id, action); revision.current++;
       setRecords(current => current.map(x => x.id === id ? result : x));
-      if (action !== 'reset') setSelectedId(null);
+      if (action !== 'reset') setSelectedId(current => current === id ? null : current);
       toast(action === 'verify' ? 'Turtle confirmed. Sighting added to the verified record.' : action === 'reject' ? 'Detection rejected and retained in the archive.' : 'Detection returned to the review queue.');
       const savedRevision = revision.current;
       try { const metrics = await api.stats(); if (savedRevision === revision.current) setStats(metrics); }
       catch { setError('Your review was saved. Dashboard totals could not refresh; use Retry to synchronize them.'); }
     } catch (err) { toast(err.message, 'error'); await refresh(true, true); }
-    finally { setBusy(current => { const next = new Set(current); next.delete(id); return next; }); }
+    finally { activeMutations.current.delete(id); setBusy(current => { const next = new Set(current); next.delete(id); return next; }); }
   }
-  const selected = records.find(x => x.id === selectedId);
+  async function onBulkReview(ids, action) {
+    const targets = [...new Set(ids)].filter(id => !activeMutations.current.has(id));
+    targets.forEach(id => activeMutations.current.add(id));
+    setBusy(current => new Set([...current, ...targets])); revision.current++;
+    const saved = new Map(); const failures = [];
+    let cursor = 0;
+    try {
+      await Promise.all(Array.from({ length: Math.min(4, targets.length) }, async () => {
+        while (cursor < targets.length) {
+          const id = targets[cursor++];
+          try { saved.set(id, await api.review(id, action)); }
+          catch (failure) { failures.push({ id, message: failure.message }); }
+        }
+      }));
+      revision.current++;
+      setRecords(current => current.map(item => saved.get(item.id) || item));
+      if (action !== 'reset') setSelectedId(current => saved.has(current) ? null : current);
+      const verb = action === 'verify' ? 'Confirmed' : action === 'reject' ? 'Rejected' : 'Restored';
+      toast(failures.length ? `${saved.size} of ${targets.length} detections updated. ${failures[0].message}` : `${verb} ${saved.size} detection${saved.size === 1 ? '' : 's'}.`, failures.length ? 'error' : 'success');
+      const savedRevision = revision.current;
+      try { const metrics = await api.stats(); if (savedRevision === revision.current) setStats(metrics); }
+      catch { setError('Your reviews were saved. Dashboard totals could not refresh; use Retry to synchronize them.'); }
+      if (failures.length) await refresh(true, true);
+      return { failedIds: failures.map(failure => failure.id) };
+    } finally {
+      targets.forEach(id => activeMutations.current.delete(id));
+      setBusy(current => new Set([...current].filter(id => !targets.includes(id))));
+    }
+  }
+  async function onDeletePhotos(imageIds) {
+    const photos = new Set(imageIds);
+    const ids = records.filter(item => photos.has(item.image_id)).map(item => item.id);
+    if (ids.some(id => activeMutations.current.has(id))) throw new Error('A selected photo is being reviewed. Wait for that review to finish and try again.');
+    ids.forEach(id => activeMutations.current.add(id));
+    setBusy(current => new Set([...current, ...ids])); revision.current++;
+    try {
+      const result = await api.deleteRejectedPhotos(imageIds); revision.current++;
+      const removed = new Set(result.deleted_image_ids);
+      setRecords(current => current.filter(item => !removed.has(item.image_id)));
+      setSelectedId(current => ids.includes(current) ? null : current);
+      toast(`Deleted ${result.deleted_photos} photo${result.deleted_photos === 1 ? '' : 's'}.${result.cleanup_pending ? ' Some local file cleanup is pending; check the server log.' : ''}`);
+      const savedRevision = revision.current;
+      try { const metrics = await api.stats(); if (savedRevision === revision.current) setStats(metrics); }
+      catch { setError('The photos were deleted. Dashboard totals could not refresh; use Retry to synchronize them.'); }
+      return result;
+    } catch (failure) { revision.current++; await refresh(true, true); throw failure; }
+    finally { ids.forEach(id => activeMutations.current.delete(id)); setBusy(current => new Set([...current].filter(id => !ids.includes(id)))); }
+  }
+  const recordById = useMemo(() => new Map(records.map(item => [item.id, item])), [records]);
+  const inspectionSequence = useMemo(() => inspectionIds.filter(id => recordById.has(id)), [inspectionIds, recordById]);
+  const selected = recordById.get(selectedId);
+  const inspectionIndex = inspectionSequence.indexOf(selectedId);
+  const moveInspection = direction => setSelectedId(current => inspectionSequence[inspectionSequence.indexOf(current) + direction] ?? current);
   const pageLabel = NAV.find(x => x[0] === page)?.[1];
   return <div className="app-shell">
     {mobileNav && <button className="sidebar-backdrop" aria-label="Close navigation" onClick={() => setMobileNav(false)} />}
@@ -269,7 +383,7 @@ export default function App() {
       <div className="nav-label eyebrow">YOUR WORKSPACE</div>
       <nav aria-label="Main navigation">{NAV.map(([key, label, Icon]) => <button key={key} className={`nav-item ${page === key ? 'active' : ''}`} onClick={() => navigate(key)} aria-current={page === key ? 'page' : undefined}><Icon size={21} /><span>{label}</span>{key === 'pending' && stats?.pending > 0 && <span className="nav-count">{stats.pending}</span>}</button>)}</nav>
       <div className="sidebar-bottom">
-        <div className="sidebar-survey"><Plane size={21} /><strong>DJI Avata 2</strong><span>Recorded photos & footage</span><div><span className="status-dot amber-dot" />No live drone connected</div><button className="text-button" onClick={() => navigate('live')}>Source setup <ArrowUpRight size={14} /></button></div>
+        <div className="sidebar-survey"><Plane size={21} /><strong>DJI Avata 2</strong><span>Recorded media & scrcpy</span><div><span className="status-dot amber-dot" />Drone link unverified</div><button className="text-button" onClick={() => navigate('live')}>Source setup <ArrowUpRight size={14} /></button></div>
         <button className="sidebar-engine" onClick={() => navigate('settings')}><span className="engine-status"><Cpu size={17} /></span><span><strong>{settings?.active_model_id === 'demo' ? 'Demo mode active' : settings ? 'Local model active' : 'Connecting to backend'}</strong><small>{settings?.active_model_id === 'demo' ? 'Simulated detections' : 'Local workspace · no cloud AI'}</small></span><ChevronRight size={15} /></button>
         <div className="sidebar-footer"><span className="status-dot" />Stored on this computer</div>
       </div>
@@ -278,16 +392,16 @@ export default function App() {
       {error && <div className="error-banner" role="alert"><XCircle size={18} /><span>{error}</span><button className="text-button" onClick={() => refresh(false, true)}>Retry <RefreshCw size={14} /></button></div>}
       {loading ? <div className="initial-loading"><Spinner /><h2>Opening your field workspace…</h2></div> : !stats || !settings ? <Empty title="Start the local backend" icon={Cpu} action={<button className="button primary" onClick={() => refresh()}>Try connection again</button>}>Run the project launcher or start FastAPI, then reconnect.</Empty> : <>
         {settings.active_model_id === 'demo' && <div className="demo-banner"><span className="demo-symbol"><Sprout size={15} /></span><span><strong>Demo workspace</strong><span className="demo-banner-detail"> · Mock detections. Synthetic sample imagery and locations.</span></span><button onClick={() => navigate('settings')}>Configure model <ArrowUpRight size={13} /></button></div>}
-        {page === 'dashboard' && <Overview records={records} stats={stats} navigate={navigate} onOpen={setSelectedId} onReview={onReview} busy={busy} />}
-        {['pending', 'sightings'].includes(page) && <Collection key={page} kind={page} records={records} onOpen={setSelectedId} onReview={onReview} busy={busy} navigate={navigate} />}
-        {page === 'map' && <TurtleMapPage records={records} onOpen={setSelectedId} navigate={navigate} />}
+        {page === 'dashboard' && <Overview records={records} stats={stats} navigate={navigate} onOpen={openDetection} onReview={onReview} busy={busy} />}
+        {['pending', 'sightings'].includes(page) && <Collection key={page} kind={page} records={records} onOpen={openDetection} onReview={onReview} onBulkReview={onBulkReview} onDeletePhotos={onDeletePhotos} busy={busy} navigate={navigate} />}
+        {page === 'map' && <TurtleMapPage records={records} onOpen={openDetection} navigate={navigate} />}
         {page === 'upload' && <UploadPage settings={settings} jobs={jobs} refresh={mediaSaved} navigate={navigate} toast={toast} />}
-        {page === 'live' && <LiveFeed toast={toast} navigate={navigate} />}
+        {page === 'live' && <LiveFeed settings={settings} models={models} onFrameProcessed={mediaSaved} navigate={navigate} />}
         {page === 'settings' && <SettingsPage settings={settings} setSettings={settingsSaved} models={models} reloadModels={async () => setModels(await api.models())} toast={toast} />}
       </>}
       <footer className="main-footer"><span><TurtleMark size={19} />ASIAN BADDIES <span>/</span> Turtle survey workspace</span><span>Human insight. Better observations.</span></footer>
     </main></div>
-    {selected && <DetailModal key={selected.id} item={selected} onClose={() => setSelectedId(null)} onReview={onReview} busy={busy.has(selected.id)} />}
+    {selected && <DetailModal item={selected} onClose={() => setSelectedId(null)} onReview={onReview} busy={busy.has(selected.id)} index={inspectionIndex} total={inspectionSequence.length} onNavigate={moveInspection} />}
     {notification && <div className={`toast ${notification.tone}`} role={notification.tone === 'error' ? 'alert' : 'status'}>{notification.tone === 'error' ? <XCircle size={19} /> : <CircleCheck size={19} />}<span>{notification.message}</span><button className="icon-button" onClick={() => setNotification(null)} aria-label="Dismiss notification"><X size={15} /></button></div>}
   </div>;
 }

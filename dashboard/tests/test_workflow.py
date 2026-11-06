@@ -95,6 +95,53 @@ def test_external_interface_multiple_candidates_share_one_image(client, jpeg):
     assert client.get(f"/api/detections/{candidates[1]['id']}").json()["data"]["status"] == "pending"
 
 
+@pytest.mark.parametrize("local_model", [False, True], ids=["demo", "local-model"])
+def test_scrcpy_frames_use_active_engine_and_preserve_unknown_capture_metadata(client, jpeg, tmp_path, monkeypatch, local_model):
+    from backend.app import engine
+    from backend.app.schemas import Candidate
+
+    expected_model = "demo"
+    if local_model:
+        class LocalDetector:
+            def __init__(self, path, labels):
+                pass
+
+            def predict(self, image, threshold):
+                assert image.size == (320, 240)
+                return [Candidate(confidence=0.94, bounding_box=(10, 20, 80, 90))]
+
+        monkeypatch.setattr(engine, "YoloDetector", LocalDetector)
+        path = tmp_path / "scrcpy-test-model.pt"
+        path.write_bytes(b"local adapter fixture; no Ultralytics required")
+        registered = client.post("/api/models", json={"name": "Local turtle detector", "path": str(path)})
+        assert registered.status_code == 201
+        expected_model = registered.json()["data"]["id"]
+        assert settings(client, active_model_id=expected_model).status_code == 200
+
+    response = client.post("/api/ingest/frame", files={"file": ("scrcpy-frame-1.jpg", jpeg, "image/jpeg")},
+                           data={"envelope": json.dumps({"source": "scrcpy-window", "metadata": {}})})
+    assert response.status_code == 201
+    result = response.json()["data"]
+    assert result["metadata"]["missing"] == ["gps", "captured_at"]
+    assert result["metadata"]["provenance"] == {}
+    assert len(result["detections"]) == 1
+    item = result["detections"][0]
+    assert item["source"] == "scrcpy-window"
+    assert item["model_id"] == expected_model
+    assert item["is_mock"] is (not local_model)
+    assert item["is_demo"] is False
+    assert item["status"] == "pending"
+    assert item["latitude"] is None and item["longitude"] is None and item["captured_at"] is None
+    assert item["uploaded_at"] and item["created_at"]
+    folder = client.app.state.storage / "media" / result["image_id"]
+    assert (folder / "source.bin").read_bytes() == jpeg
+    assert client.get(item["original_url"]).status_code == 200
+    assert client.post(f"/api/detections/{item['id']}/reject").status_code == 200
+    retained = client.get(f"/api/detections/{item['id']}").json()["data"]
+    assert retained["status"] == "rejected" and retained["source"] == "scrcpy-window"
+    assert (folder / "source.bin").read_bytes() == jpeg
+
+
 def test_empty_external_candidates_does_not_run_engine(client, jpeg):
     result = client.post("/api/ingest/frame", files={"file": ("frame.jpg", jpeg)}, data={"envelope": '{"detections":[]}'}).json()["data"]
     assert result["detections"] == []

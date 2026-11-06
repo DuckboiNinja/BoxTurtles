@@ -113,12 +113,12 @@ test('recorded video processes selected frames with external telemetry', async (
 test('map excludes missing GPS and still works when tiles are unavailable', async ({ page, request }) => {
   const missing = (await (await request.get('/api/detections?status=pending')).json()).data.find(x => x.latitude == null);
   await request.post(`/api/detections/${missing.id}/verify`);
+  const items = (await (await request.get('/api/sightings')).json()).data;
   await page.route('**/tile.openstreetmap.org/**', route => route.abort());
   await page.goto('/#map');
-  await expect(page.getByText('1 without GPS', { exact: false })).toBeVisible();
+  await expect(page.getByText(`${items.filter(x => x.latitude == null).length} without GPS`, { exact: false })).toBeVisible();
   await expect(page.getByText('Some sightings have no location', { exact: true })).toBeVisible();
   await expect(page.getByText(/Map tiles unavailable/)).toBeVisible();
-  const items = (await (await request.get('/api/sightings')).json()).data;
   await expect(page.locator('.turtle-marker')).toHaveCount(items.filter(x => x.latitude != null).length);
   await page.getByRole('button', { name: 'Fit map to all sightings' }).click();
   await page.locator('.turtle-marker').first().click();
@@ -168,30 +168,4 @@ test('readable text scale persists and supports every page on small screens', as
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
   await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({ path: path.join(root, 'artifacts/dashboard-wide.png'), fullPage: true });
-});
-
-test('MediaMTX source can be saved, previewed and stopped without pretending inference is running', async ({ page, request }) => {
-  await page.route('http://127.0.0.1:8889/turtle**', route => route.fulfill({ contentType: 'text/html', body: '<html><body><p>Test MediaMTX player</p></body></html>' }));
-  await page.goto('/#live');
-  await expect(page.getByRole('heading', { name: 'Live feed', exact: true })).toBeVisible();
-  await expect(page.locator('iframe')).toHaveCount(0);
-  await page.getByRole('button', { name: 'Use local example' }).click();
-  await page.getByRole('button', { name: 'Save source', exact: true }).click();
-  await expect(page.getByRole('status')).toContainText('Live source saved');
-  const saved = (await (await request.get('/api/live-source')).json()).data;
-  expect(saved.playback_url).toBe('http://127.0.0.1:8889/turtle');
-  expect(saved.live_inference_enabled).toBe(false);
-  await page.reload();
-  await expect(page.getByLabel('Browser player address')).toHaveValue(saved.playback_url);
-  await expect(page.locator('iframe')).toHaveCount(0);
-  await page.getByRole('button', { name: 'Open preview', exact: true }).click();
-  await expect(page.frameLocator('iframe').getByText('Test MediaMTX player')).toBeVisible();
-  await expect(page.getByText('Preview requested', { exact: true })).toBeVisible();
-  await expect(page.getByText('Live inference is not running.', { exact: false })).toBeVisible();
-  await page.getByRole('button', { name: 'Stop preview', exact: true }).click();
-  await expect(page.locator('iframe')).toHaveCount(0);
-  await page.getByLabel('Playback method').selectOption('hls');
-  await expect(page.getByLabel('Browser player address')).toHaveValue('http://127.0.0.1:8888/turtle');
-  await page.evaluate(() => window.scrollTo(0, 0));
-  await page.screenshot({ path: path.join(root, 'artifacts/live-feed-desktop.png'), fullPage: true });
 });

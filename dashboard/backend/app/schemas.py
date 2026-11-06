@@ -1,8 +1,9 @@
 import math
 from datetime import datetime
 from typing import Literal
+from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class Metadata(BaseModel):
@@ -38,11 +39,19 @@ class IngestEnvelope(BaseModel):
     model_config = ConfigDict(extra="forbid")
     source: str = Field(default="external-frame", min_length=1, max_length=100)
     metadata: Metadata = Field(default_factory=Metadata)
+    # Measured at snapshot time by the browser, never inferred by the server.
+    frame_captured_at: AwareDatetime | None = None
     # null runs the active engine; [] means the upstream detector found nothing.
     detections: list[Candidate] | None = Field(default=None, max_length=500)
     model_id: str = Field(default="external", max_length=100)
     model_name: str = Field(default="External detector", max_length=200)
     is_mock: bool = False
+
+    @model_validator(mode="after")
+    def live_frame_timestamp_source(self):
+        if self.frame_captured_at is not None and self.source != "scrcpy-window":
+            raise ValueError("frame_captured_at is supported only for the scrcpy-window source.")
+        return self
 
 
 class SettingsUpdate(BaseModel):
@@ -62,3 +71,8 @@ class ModelRegistration(BaseModel):
 
 class ReviewStatus(BaseModel):
     status: Literal["pending", "verified", "rejected"]
+
+
+class RejectedPhotoDeletion(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    image_ids: list[UUID] = Field(min_length=1, max_length=1000)

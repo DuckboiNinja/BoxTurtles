@@ -313,3 +313,20 @@ input[type="file"]::file-selector-button:hover { background: var(--primary-hover
   .theme-toggle { min-height: 40px; padding: 7px 9px; font-size: .7rem; gap: 6px; }
   .text-size-control select { min-height: 40px; min-width: 112px; width: 112px; }
 }
+/* The scrcpy source is a browser-owned MediaStream, rendered without a relay player. */
+.scrcpy-player { position: relative; }
+.scrcpy-player video { display: none; width: 100%; height: 100%; object-fit: contain; background: #000; }
+.scrcpy-player.is-sharing video { display: block; }
+.live-advanced { margin-top: 20px; color: var(--muted); font-size: .8rem; }
+.live-advanced summary { cursor: pointer; line-height: 1.6; }
+.live-advanced label { display: flex; flex-direction: column; gap: 9px; margin-top: 18px; color: var(--text); }
+.live-config .help-text { line-height: 1.8; overflow-wrap: anywhere; }
+.scrcpy-steps { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 900px) {
+  .scrcpy-steps { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+  .scrcpy-steps > li { padding: 0 0 20px; border-right: 0; border-bottom: 1px solid var(--line); }
+  .scrcpy-steps > li:last-child { border-bottom: 0; }
+}
+@media (max-width: 700px) {
+  .scrcpy-player.is-sharing video { height: 350px; }
+}

@@ -20,7 +20,8 @@
 | A partially successful photo batch cleared failed files too | Failed files remain selected for retry. |
 | EXIF GPS without hemisphere references silently assumed north/east | GPS stays unknown unless both valid hemisphere references are present; malformed DMS values are rejected. |
 | Truncated telemetry CSV rows could raise a server error | Missing optional fields stay unknown; invalid coordinate pairs return a clear validation error. |
-| Live preview accepted some URLs that Save source rejected | Preview and saved configuration now consistently reject missing stream paths, playlists and WHEP endpoints. |
+| Live input depended on a relay-player URL without exposing frames for detection | The page now captures a browser-shared scrcpy window and optionally submits sampled frames through the existing ingestion API. Browser fixtures exercise preview, explicit detection, and null camera metadata. |
+| Slow inference or a stopped capture could accumulate later frames | Only one frame request runs at a time; stopping, source loss, hidden tabs, and navigation stop the sampler. Browser fixtures cover slow responses, stop-sharing, navigation, and a picker that resolves after leaving the page. |
 | A capped portrait preview could letterbox the image while boxes used the full container | The inspector preserves the actual image aspect ratio so pixel boxes align. |
 | Updates to unrelated pending records rebuilt map markers and dismissed popups | Marker rebuilds depend on the located sightings' contents. |
 | Switching pages during a Leaflet zoom could run a transition callback after the map was removed | Map zoom and automatic fitting are immediate; teardown stops pending movement and disconnects resize observation. Rapid shortcut navigation and zoom-away behavior are covered by the browser check. |
@@ -30,6 +31,6 @@
 
 ## Verification scope
 
-Backend tests use temporary databases; browser tests use isolated data under `.tools/e2e-data/`. No survey records are changed by the tests. The tests exercise demo inference and controlled external-frame/player fixtures, rather than a connected drone or real .pt inference. Actual Avata 2/N3/Android video publication, MediaMTX interoperability and model accuracy still need hardware/source-media validation.
+Backend tests use temporary databases; browser tests use isolated data under `.tools/e2e-data/`. No survey records are changed by the tests. The tests exercise demo inference, controlled external frames, and generated canvas `MediaStream` fixtures for scrcpy window capture. Capture coverage includes preview without ingestion, explicit detection with unknown camera metadata, one request at a time, stopping and teardown, canceled sharing, ingestion failures, and in-memory token handling. These fixtures do not exercise the actual Ubuntu screen-sharing picker, PipeWire/desktop portal, or DJI hardware. Capturing the user's Avata 2/N3/Android image through scrcpy and validating the real model's accuracy still require hardware/source-media checks.
 
 Run `python -m pytest -q` in the project's environment, `npm run build` inside frontend, and `npm run test:e2e` with the configured local test browser. Exact final results are recorded in [PROGRESS.md](PROGRESS.md).
